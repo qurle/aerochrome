@@ -53,7 +53,7 @@
 <div class="box" bind:this={box}>
   <div class="frame" style:width="{fit.w}px">
     {#if top}<div class="row" bind:clientHeight={topH}>{@render top()}</div>{/if}
-    <div class="image" style:height="{fit.h}px">
+    <div class="image" class:placeholder={!editor.image} style:width="{fit.w}px" style:height="{fit.h}px">
       <canvas
         bind:this={canvas}
         class:hidden={!editor.image}
@@ -88,7 +88,8 @@
   }
   .frame { display: flex; flex-direction: column; gap: 16px; max-width: 100%; }
   .row { display: flex; gap: 8px; }
-  .image { position: relative; }
+  .image { position: relative; max-width: 100%; }
+  .placeholder { min-width: min(100%, 280px); }
   canvas {
     display: block;
     cursor: pointer;
@@ -107,12 +108,11 @@
     justify-content: center;
     gap: 8px;
     padding: 24px;
-    border: 2px solid var(--line);
+    border: 0;
     background: transparent;
     text-align: center;
     cursor: pointer;
   }
-  .empty:hover { border-color: var(--ink); }
   .muted { color: var(--muted); }
   .badge {
     position: absolute;
