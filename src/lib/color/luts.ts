@@ -2,7 +2,7 @@ import { LUT_SIZE } from './lut';
 import type { LutRequest } from './lut.worker';
 import type { WorkingSpace } from './spaces';
 
-interface Job { req: LutRequest; resolve: (d: Float32Array) => void; promise: Promise<Float32Array> }
+interface Job { req: LutRequest; slot?: string; resolve: (d: Float32Array | null) => void; promise: Promise<Float32Array | null> }
 
 /**
  * Bakes LUTs off the main thread and caches them by preset, space and size.
@@ -15,6 +15,8 @@ export class LutCache {
   private queue: Job[] = [];
   private jobs = new Map<string, Job>();
   private running: Job | null = null;
+  /** Tweaked variations are cached too, but only the most recent few. */
+  private tweaked: string[] = [];
 
   private getWorker() {
     if (!this.worker) {
@@ -23,6 +25,10 @@ export class LutCache {
         const job = this.running!;
         this.running = null;
         this.done.set(e.data.key, e.data.data);
+        if (job.req.tweak) {
+          this.tweaked.push(e.data.key);
+          while (this.tweaked.length > 8) this.done.delete(this.tweaked.shift()!);
+        }
         this.jobs.delete(e.data.key);
         job.resolve(e.data.data);
         this.pump();
@@ -37,9 +43,13 @@ export class LutCache {
     this.getWorker().postMessage(this.running.req);
   }
 
-  /** `urgent` puts the request at the front of the queue. */
-  get(id: string, space: WorkingSpace, size = LUT_SIZE, urgent = true): Promise<Float32Array> {
-    const key = `${id}|${space}|${size}`;
+  /**
+   * `urgent` puts the request at the front of the queue. A `slot` makes newer
+   * requests supersede queued ones in the same slot (they resolve to null), so
+   * scrubbing a slider doesn't pile up stale work.
+   */
+  get(id: string, space: WorkingSpace, size = LUT_SIZE, urgent = true, tweak = 0, slot?: string): Promise<Float32Array | null> {
+    const key = `${id}|${space}|${size}|${tweak}`;
     const hit = this.done.get(key);
     if (hit) return Promise.resolve(hit);
     let job = this.jobs.get(key);
@@ -49,9 +59,17 @@ export class LutCache {
       if (urgent && i > 0) { this.queue.splice(i, 1); this.queue.unshift(job); }
       return job.promise;
     }
-    let resolve!: (d: Float32Array) => void;
-    const promise = new Promise<Float32Array>((r) => (resolve = r));
-    job = { req: { key, id, space, size }, resolve, promise };
+    if (slot) {
+      this.queue = this.queue.filter((j) => {
+        if (j.slot !== slot) return true;
+        this.jobs.delete(j.req.key);
+        j.resolve(null);
+        return false;
+      });
+    }
+    let resolve!: (d: Float32Array | null) => void;
+    const promise = new Promise<Float32Array | null>((r) => (resolve = r));
+    job = { req: { key, id, space, size, tweak }, slot, resolve, promise };
     this.jobs.set(key, job);
     if (urgent) this.queue.unshift(job);
     else this.queue.push(job);

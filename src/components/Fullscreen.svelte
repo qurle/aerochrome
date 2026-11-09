@@ -111,17 +111,17 @@
 
   // Re-render on any change of transform, settings or LUT.
   $effect(() => {
-    void [s, x, y, vw, vh, lutReady, editor.lutVersion, editor.comparing, editor.strength, editor.sharpen, editor.film, editor.seed];
+    void [s, x, y, vw, vh, lutReady, editor.lutVersion, editor.comparing, editor.strength, editor.sharpen, editor.film, editor.tweak];
     request();
   });
 
-  // Keep the LUT in sync with the selected preset.
+  // Show the same LUT as the main view (preset + tweak).
   $effect(() => {
-    const id = editor.presetId;
-    if (!rendererReady || !renderer) return;
-    void editor.lutFor(id, renderer.space).then((lut) => {
-      if (renderer && id === editor.presetId) { renderer.setLut(lut); lutReady = true; request(); }
-    });
+    const lut = editor.currentLut;
+    if (!rendererReady || !renderer || !lut) return;
+    renderer.setLut(lut);
+    lutReady = true;
+    request();
   });
 
   // --- Gestures: drag to pan, pinch / wheel / double-tap to zoom.

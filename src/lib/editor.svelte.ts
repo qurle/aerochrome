@@ -1,11 +1,13 @@
+import { LUT_SIZE } from './color/lut';
 import { LutCache } from './color/luts';
+import { tweakEffect } from './color/tweak';
 import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
-import { ALL_PRESETS, findPreset, type Preset } from './presets';
+import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
 
-export const DEFAULTS = { strength: 1, sharpen: 0, film: 0.12 };
+export const DEFAULTS = { strength: 1, sharpen: 0, film: 0, tweak: 0 };
 const THUMB_PX = 128;
 /** Thumbnails use a coarser LUT: 8× cheaper to bake, invisible at 64 px. */
 const THUMB_LUT = 17;
@@ -21,8 +23,10 @@ class Editor {
   comparing = $state(false);
   /** Fullscreen zoomable viewer. */
   fullscreen = $state(false);
-  /** Layout of random effects (prism light spots); new per photo, re-rolled by tapping the selected preset. */
-  seed = $state(Math.random() * 100);
+  /** Variation dial, 0–100; 0 = preset as designed. Resets when switching presets. */
+  tweak = $state(DEFAULTS.tweak);
+  /** LUT currently shown (shared with the fullscreen viewer). */
+  currentLut = $state.raw<Float32Array | null>(null);
   busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number }>(null);
   error = $state<string | null>(null);
   thumbs = $state.raw<Record<string, ImageBitmap>>({});
@@ -40,11 +44,13 @@ class Editor {
   params(original = false): RenderParams {
     const p = this.preset;
     if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0 };
-    const fx = spatial(p), k = this.strength;
+    const fx = spatial(p), t = this.tweak, k = this.strength;
+    // Tweak also varies effect strengths, and its value lays out the light spots.
+    const e = (ch: number) => k * tweakEffect(t, ch);
     return {
-      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: this.seed,
-      aberration: fx.aberration * k, split: [fx.split[0] * k, fx.split[1] * k], prism: fx.prism * k,
-      flare: fx.flare * k, leak: [fx.leak[0] * k, fx.leak[1], fx.leak[2]], edge: fx.edge * k,
+      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: 3.17 + t * 7.31,
+      aberration: fx.aberration * e(0), split: [fx.split[0] * e(1), fx.split[1] * e(1)], prism: fx.prism * e(2),
+      flare: fx.flare * e(3), leak: [fx.leak[0] * e(4), fx.leak[1], fx.leak[2] * tweakEffect(t, 5)], edge: fx.edge * e(6),
     };
   }
 
@@ -56,11 +62,6 @@ class Editor {
     } catch (e) {
       this.error = (e as Error).message;
     }
-  }
-
-  /** Full-size LUT for any renderer (cached, baked in the worker). */
-  lutFor(id: string, space: Renderer['space']) {
-    return this.luts.get(id, space);
   }
 
   /** Open fullscreen; adds a history entry so Back (or the Android back gesture) closes it. */
@@ -79,16 +80,68 @@ class Editor {
   /** Version counter so the viewer re-renders once a LUT lands. */
   lutVersion = $state(0);
 
-  async select(id: string) {
-    if (id === this.presetId && (findPreset(id).leak || findPreset(id).edge)) this.seed = Math.random() * 100;
+  select(id: string) {
+    if (id !== this.presetId) this.tweak = 0;
     this.presetId = id;
+    return this.loadLut();
+  }
+
+  setTweak(t: number) {
+    t = Math.max(0, Math.min(100, Math.round(t)));
+    if (t === this.tweak) return;
+    this.tweak = t;
+    void this.loadLut();
+  }
+
+  private applyLut(lut: Float32Array) {
+    this.renderer?.setLut(lut);
+    this.currentLut = lut;
+    this.lutVersion++;
+  }
+
+  /**
+   * Load the LUT for the current preset and tweak. Tweaked LUTs show a quick
+   * 17³ version first and the full 33³ one right after, so scrubbing stays live.
+   */
+  private async loadLut() {
     const r = this.renderer;
     if (!r) return;
     const job = ++this.selectJob;
-    const lut = await this.luts.get(id, r.space);
-    if (job !== this.selectJob) return;
-    r.setLut(lut);
-    this.lutVersion++;
+    const id = this.presetId, t = this.tweak;
+    if (t) {
+      const lo = await this.luts.get(id, r.space, THUMB_LUT, true, t, 'tweak-lo');
+      if (job !== this.selectJob) return;
+      if (lo) this.applyLut(lo);
+    }
+    const hi = await this.luts.get(id, r.space, LUT_SIZE, true, t, t ? 'tweak-hi' : undefined);
+    if (job !== this.selectJob || !hi) return;
+    this.applyLut(hi);
+  }
+
+  /** Name shown briefly over the photo after switching by swipe or keyboard. */
+  flash = $state<string | null>(null);
+  private flashTimer = 0;
+
+  private announce() {
+    this.flash = `${groupOf(this.presetId).name} ${this.preset.name}`;
+    clearTimeout(this.flashTimer);
+    this.flashTimer = window.setTimeout(() => (this.flash = null), 1100);
+  }
+
+  /** Step through presets in display order (keyboard arrows, swipes). */
+  step(by: number) {
+    const i = ALL_PRESETS.findIndex((p) => p.id === this.presetId);
+    void this.select(ALL_PRESETS[(i + by + ALL_PRESETS.length) % ALL_PRESETS.length].id);
+    this.announce();
+  }
+
+  /** Jump to the same position in the previous/next group. */
+  stepGroup(by: number) {
+    const gi = GROUPS.indexOf(groupOf(this.presetId));
+    const pi = GROUPS[gi].presets.findIndex((p) => p.id === this.presetId);
+    const g = GROUPS[(gi + by + GROUPS.length) % GROUPS.length];
+    void this.select(g.presets[Math.min(pi, g.presets.length - 1)].id);
+    this.announce();
   }
 
   async open(file: File) {
@@ -98,7 +151,6 @@ class Editor {
       const img = await loadImage(file);
       this.image?.preview.close();
       this.image = img;
-      this.seed = Math.random() * 100;
       this.renderer?.setSource(img.preview);
       void this.buildThumbs();
     } catch (e) {
@@ -125,9 +177,10 @@ class Editor {
     for (const id of order) {
       if (job !== this.thumbJob) break;
       const preset = findPreset(id);
-      r.setLut(await this.luts.get(id, r.space, THUMB_LUT));
-      if (job !== this.thumbJob) break;
-      r.render({ strength: 1, sharpen: 0, film: 0.1, ...spatial(preset), seed: 7 }, [side, side]);
+      const lut = await this.luts.get(id, r.space, THUMB_LUT);
+      if (job !== this.thumbJob || !lut) break;
+      r.setLut(lut);
+      r.render({ strength: 1, sharpen: 0, film: 0, ...spatial(preset), seed: 3.17 }, [side, side]);
       const bmp = await createImageBitmap(r.canvas as HTMLCanvasElement);
       this.thumbs[id]?.close();
       this.thumbs = { ...this.thumbs, [id]: bmp };
@@ -143,6 +196,9 @@ class Editor {
     const r = this.renderer!;
     const scale = Math.min(1, maxSide / Math.max(img.width, img.height), Math.sqrt(exportBudget() / (img.width * img.height)));
     const W = Math.round(img.width * scale), H = Math.round(img.height * scale);
+    // Never export with the quick 17³ LUT shown while scrubbing Tweak.
+    const lut = await this.luts.get(this.presetId, r.space, LUT_SIZE, true, this.tweak);
+    if (lut) r.setLut(lut);
     const full = await decodeFull(img.file);
     try {
       const pixels = await r.renderFull(this.params(), [W, H],

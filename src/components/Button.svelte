@@ -6,6 +6,7 @@
     size = 'md',
     disabled = false,
     label,
+    title,
     onclick,
     onpointerdown,
     onpointerup,
@@ -15,6 +16,7 @@
     size?: 'md' | 'sm';
     disabled?: boolean;
     label?: string;
+    title?: string;
     onclick?: (e: MouseEvent) => void;
     onpointerdown?: (e: PointerEvent) => void;
     onpointerup?: (e: PointerEvent) => void;
@@ -26,6 +28,7 @@
   class="{variant} {size}"
   {disabled}
   aria-label={label}
+  {title}
   {onclick}
   {onpointerdown}
   {onpointerup}

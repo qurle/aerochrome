@@ -29,6 +29,19 @@
     return () => ro.disconnect();
   });
 
+  // Tap opens fullscreen; a horizontal swipe steps to the next/previous preset.
+  let start: { x: number; y: number; t: number } | null = null;
+  function down(e: PointerEvent) {
+    start = { x: e.clientX, y: e.clientY, t: performance.now() };
+  }
+  function up(e: PointerEvent) {
+    if (!start) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y, dt = performance.now() - start.t;
+    start = null;
+    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 700) editor.step(dx < 0 ? 1 : -1);
+    else if (Math.hypot(dx, dy) < 8) editor.openFullscreen();
+  }
+
   // Re-render whenever anything visible changes, at most once per frame.
   let raf = 0;
   $effect(() => {
@@ -58,8 +71,10 @@
         class:hidden={!editor.image}
         style:width="{fit.w}px"
         style:height="{fit.h}px"
-        title="Open fullscreen"
-        onclick={() => editor.openFullscreen()}
+        title="Open fullscreen (F) · swipe to change preset"
+        onpointerdown={down}
+        onpointerup={up}
+        onpointercancel={() => (start = null)}
         oncontextmenu={(e) => e.preventDefault()}
       ></canvas>
       {#if !editor.image}
@@ -68,7 +83,8 @@
           <span class="muted">or tap Open. It never leaves your device.</span>
         </button>
       {/if}
-      {#if editor.comparing}<span class="badge">Original</span>{/if}
+      {#if editor.comparing}<span class="badge">Original</span>
+      {:else if editor.flash}<span class="badge">{editor.flash}</span>{/if}
     </div>
     {#if bottom}<div class="row" bind:clientHeight={bottomH}>{@render bottom()}</div>{/if}
   </div>
@@ -90,7 +106,7 @@
   canvas {
     display: block;
     cursor: zoom-in;
-    touch-action: manipulation;
+    touch-action: pan-y;
     user-select: none;
     -webkit-user-select: none;
     -webkit-touch-callout: none;
