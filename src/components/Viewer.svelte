@@ -113,9 +113,8 @@
         style:height="{fit.h}px"
         title="Open fullscreen (F) · swipe to change preset"
         style:transform="translateX({slide.x}px)"
-        style:opacity={slide.op}
-        style:transition={slide.tr}
-        style:visibility={editor.fullscreen ? 'hidden' : 'visible'}
+        style:opacity={editor.fullscreen ? 1 - editor.fsBg : slide.op}
+        style:transition={editor.fullscreen ? editor.fsFade : slide.tr}
         onpointerdown={down}
         onpointermove={move}
         onpointerup={up}

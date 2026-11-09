@@ -81,6 +81,9 @@ class Editor {
 
   /** Set while fullscreen plays its closing animation (the viewer then calls finishCloseFullscreen). */
   fsClosing = $state(false);
+  /** Fullscreen background opacity (0..1) and its transition, so the main photo can fade opposite to it. */
+  fsBg = $state(0);
+  fsFade = $state('none');
   /** A user gesture is resizing the layout: skip WebGL renders until it settles. */
   gesturing = $state(false);
 

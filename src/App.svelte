@@ -11,6 +11,8 @@
   let dragging = $state(false);
   let pager: HTMLDivElement;
   let page = $state(0);
+  /** Preset list scrolled away from the top: show the top fade. */
+  let listScrolled = $state(false);
   /** Mobile: presets pane dragged down, photo takes the screen. */
   let collapsed = $state(false);
   const group = $derived(groupOf(editor.presetId));
@@ -203,8 +205,8 @@
       <span class="current"><span class="label">{group.name}</span> {editor.preset.name}</span>
     </button>
     <div class="pager" bind:this={pager} onscroll={scrolled}>
-      <div class="page presets">
-        <div class="scroll">
+      <div class="page presets" class:scrolled={listScrolled}>
+        <div class="scroll" onscroll={(e) => (listScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
           {#each GROUPS as group (group.id)}
             <div class="group">
               <span class="label">{group.name}</span>
@@ -274,6 +276,18 @@
   }
   .pager { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 64px; }
   .presets { flex: 1; min-height: 0; position: relative; }
+  .presets::before {
+    content: '';
+    position: absolute;
+    left: 0; right: 0; top: 0;
+    height: 24px;
+    background: linear-gradient(var(--bg), transparent);
+    pointer-events: none;
+    z-index: 1;
+    opacity: 0;
+    transition: opacity 0.2s;
+  }
+  .presets.scrolled::before { opacity: 1; }
   .presets::after {
     content: '';
     position: absolute;
@@ -362,7 +376,7 @@
     }
     .pager::-webkit-scrollbar { display: none; }
     .page { flex: none; width: calc(100% - 40px); height: 100%; scroll-snap-align: start; }
-    .sliders { justify-content: flex-start; }
+    .sliders { justify-content: flex-start; gap: 14px; overflow-y: auto; padding-bottom: 8px; }
     .dots { padding: 12px 0 max(16px, env(safe-area-inset-bottom)); }
   }
 </style>

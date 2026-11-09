@@ -49,26 +49,63 @@
     const from = { s, x, y };
     if (atFit) zoomTo(Math.min(maxScale(), Math.max(1 / dpr(), fitScale() * 2)), cx, cy);
     else fit();
-    tweenView(from, { s, x, y });
+    animateZoom(from, { s, x, y });
   }
 
-  // Animate the view transform. Frames render from the preview (fast path);
-  // the sharp full-resolution pass runs once at the end.
-  let tween = 0;
-  function tweenView(from: { s: number; x: number; y: number }, to: { s: number; x: number; y: number }, ms = 260) {
-    cancelAnimationFrame(tween);
-    if (reduced()) return;
-    const t0 = performance.now();
+  // Zoom animation without per-frame WebGL work: animate a CSS transform on
+  // whichever rendered frame shows more of the photo (the less zoomed one),
+  // then render the final view once and drop the transform.
+  type View = { s: number; x: number; y: number };
+  let zt = $state({ tx: 0, ty: 0, k: 1 }); // origin: canvas top-left
+  let ztTr = $state('none');
+  let zoomEnd = 0;
+  let pendingZoom: View | null = null;
+  const ZOOM_MS = 320;
+  // Zoom needs a visible middle; the snappier motion ease front-loads it too much.
+  const ZOOM_EASE = 'cubic-bezier(0.4, 0, 0.2, 1)';
+
+  function animateZoom(from: View, to: View) {
+    finishZoom();
+    if (reduced() || (from.s === to.s && from.x === to.x && from.y === to.y)) return;
     interacting = true;
-    const step = (now: number) => {
-      const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
-      s = from.s + (to.s - from.s) * e;
-      x = from.x + (to.x - from.x) * e;
-      y = from.y + (to.y - from.y) * e;
-      if (k < 1) tween = requestAnimationFrame(step);
-      else { interacting = false; scheduleDetail(); }
-    };
-    tween = requestAnimationFrame(step);
+    if (to.s > from.s) {
+      // Zoom in: keep the current frame and scale it to where the target view lands.
+      s = from.s; x = from.x; y = from.y;
+      pendingZoom = to;
+      const left = Math.max(0, from.x), top = Math.max(0, from.y), k = to.s / from.s;
+      requestAnimationFrame(() => {
+        ztTr = `transform ${ZOOM_MS}ms ${ZOOM_EASE}`;
+        zt = { tx: to.x + (left - from.x) * k - left, ty: to.y + (top - from.y) * k - top, k };
+      });
+    } else {
+      // Zoom out: render the target (wider) view now, start it scaled to the
+      // current state, then let it settle.
+      s = to.s; x = to.x; y = to.y;
+      draw(false);
+      const left = Math.max(0, to.x), top = Math.max(0, to.y), k = from.s / to.s;
+      ztTr = 'none';
+      zt = { tx: from.x + (left - to.x) * k - left, ty: from.y + (top - to.y) * k - top, k };
+      requestAnimationFrame(() => requestAnimationFrame(() => {
+        ztTr = `transform ${ZOOM_MS}ms ${ZOOM_EASE}`;
+        zt = { tx: 0, ty: 0, k: 1 };
+      }));
+    }
+    zoomEnd = window.setTimeout(finishZoom, ZOOM_MS + 40);
+  }
+
+  /** Jump to the end of a running zoom animation (also used when a new gesture starts). */
+  function finishZoom() {
+    clearTimeout(zoomEnd);
+    if (!interacting && !pendingZoom && zt.k === 1 && !zt.tx && !zt.ty) return;
+    if (pendingZoom) {
+      s = pendingZoom.s; x = pendingZoom.x; y = pendingZoom.y;
+      pendingZoom = null;
+      draw(false); // final content before the transform goes away, same frame
+    }
+    ztTr = 'none';
+    zt = { tx: 0, ty: 0, k: 1 };
+    interacting = false;
+    scheduleDetail();
   }
 
   // --- Motion layer: CSS transforms on the already-rendered canvas, so open,
@@ -77,12 +114,23 @@
   let m = $state({ tx: 0, ty: 0, scale: 1, op: 1, bg: 0, chrome: 0 });
   let transition = $state('none');
   const EASE = 'cubic-bezier(0.2, 0.85, 0.25, 1)';
+  // The main view's photo fades in as this background fades out (and back).
+  let fadeMs = $state(0);
+  let cw = $state(0), ch = $state(0);
+  $effect(() => { editor.fsBg = m.bg; editor.fsFade = fadeMs ? `opacity ${fadeMs}ms ${EASE}` : 'none'; });
 
+  let motionToken = 0;
   function animate(to: Partial<typeof m>, ms: number) {
     ms = reduced() ? 0 : ms;
+    const token = ++motionToken;
     transition = ms ? `transform ${ms}ms ${EASE}, opacity ${ms}ms ${EASE}` : 'none';
+    fadeMs = ms;
     m = { ...m, ...to };
-    return new Promise<void>((r) => setTimeout(r, ms + 20));
+    return new Promise<void>((r) => setTimeout(() => {
+      // Drop the transition once done, so later instant changes stay instant.
+      if (token === motionToken) { transition = 'none'; fadeMs = 0; }
+      r();
+    }, ms + 20));
   }
 
   /** Transform that places the fitted photo over the main view's photo. */
@@ -126,6 +174,7 @@
   function draw(sharp: boolean) {
     if (!renderer || !lutReady) return;
     const v = visible();
+    cw = v.w; ch = v.h;
     canvas.style.left = `${v.x0}px`;
     canvas.style.top = `${v.y0}px`;
     canvas.style.width = `${v.w}px`;
@@ -197,6 +246,7 @@
 
   function pointerdown(e: PointerEvent) {
     if ((e.target as HTMLElement).closest('button')) return;
+    finishZoom();
     stage.setPointerCapture(e.pointerId);
     const p = local(e);
     pointers.set(e.pointerId, p);
@@ -222,6 +272,8 @@
       samples.push({ t: performance.now(), y: p.y });
       while (samples.length > 2 && samples[samples.length - 1].t - samples[0].t > 100) samples.shift();
       transition = 'none';
+      fadeMs = 0;
+      motionToken++;
       m = { ...m, tx: (p.x - down.x) * 0.3, ty: dy, scale: 1 - k * 0.15, bg: 1 - k, chrome: 1 - Math.min(1, k * 2) };
       return;
     }
@@ -274,6 +326,7 @@
 
   function wheel(e: WheelEvent) {
     e.preventDefault();
+    finishZoom();
     const p = local(e);
     // Trackpad pinch arrives as ctrl+wheel with small deltas.
     const k = e.ctrlKey ? 0.012 : 0.0018;
@@ -287,7 +340,7 @@
     if (e.key === 'Escape') editor.closeFullscreen();
     else if (e.key === '+' || e.key === '=') zoomTo(s * 1.5, vw / 2, vh / 2);
     else if (e.key === '-') zoomTo(s / 1.5, vw / 2, vh / 2);
-    else if (e.key === '0') { const from = { s, x, y }; fit(); tweenView(from, { s, x, y }); }
+    else if (e.key === '0') { const from = { s, x, y }; fit(); animateZoom(from, { s, x, y }); }
     else if (e.key === '1') zoomTo(1 / dpr(), vw / 2, vh / 2);
     else return;
     e.preventDefault();
@@ -331,7 +384,7 @@
       document.body.style.overflow = '';
       clearTimeout(detailTimer);
       cancelAnimationFrame(raf);
-      cancelAnimationFrame(tween);
+      clearTimeout(zoomEnd);
       full?.close();
       renderer?.dispose();
       editor.comparing = false;
@@ -359,9 +412,9 @@
 >
   <canvas
     bind:this={canvas}
-    style:transform="translate({m.tx}px, {m.ty}px) scale({m.scale})"
+    style:transform="translate({m.tx + ((1 - m.scale) * cw) / 2}px, {m.ty + ((1 - m.scale) * ch) / 2}px) scale({m.scale}) translate({zt.tx}px, {zt.ty}px) scale({zt.k})"
     style:opacity={m.op}
-    style:transition={transition}
+    style:transition={ztTr !== 'none' ? ztTr : transition}
   ></canvas>
 
   <div class="top">
@@ -389,7 +442,7 @@
     outline: none;
   }
   .fullscreen:active { cursor: grabbing; }
-  canvas { position: absolute; display: block; will-change: transform; }
+  canvas { position: absolute; display: block; will-change: transform; transform-origin: 0 0; }
   .top, .bottom { opacity: var(--chrome); transition: var(--fade); }
   .top, .bottom {
     position: absolute;
