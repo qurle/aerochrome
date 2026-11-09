@@ -31,6 +31,9 @@ uniform vec4 uFilmMix;   // grain, halation, vignette, soft
 uniform float uFade;
 uniform float uAberr;
 uniform vec2 uSplit;    // linear R/B offset in full-image uv (B gets the opposite)
+uniform float uPrism;   // spectral dispersion: 9 rainbow-tinted samples instead of an R/B split
+uniform float uFlare;   // iridescent glow rings around highlights plus mirrored lens ghosts
+uniform vec3 uLeak;     // prism light leak: amount, angle (radians), offset across the frame
 
 vec2 srcUv(vec2 u) { return (u - uSrcRect.xy) / (uSrcRect.zw - uSrcRect.xy); }
 
@@ -46,6 +49,12 @@ float valueNoise(vec2 p) {
              mix(hash(i + vec2(0, 1)), hash(i + vec2(1, 1)), f.x), f.y);
 }
 
+// Rainbow from red (t = 0) to violet (t = 1).
+vec3 spectrum(float t) {
+  return clamp(abs(fract(t * 0.82 + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
+}
+vec3 screen(vec3 a, vec3 b) { return 1.0 - (1.0 - a) * (1.0 - clamp(b, 0.0, 1.0)); }
+
 vec3 lut(vec3 c) {
   vec3 coord = (clamp(c, 0.0, 1.0) * (uLutSize - 1.0) + 0.5) / uLutSize;
   return texture(uLut, coord).rgb;
@@ -60,7 +69,19 @@ void main() {
   vec2 aspect = vec2(uImageSize.x / max(uImageSize.x, uImageSize.y), uImageSize.y / max(uImageSize.x, uImageSize.y));
   vec2 d = (u - 0.5) * aspect;
   vec3 c;
-  if (uAberr > 0.0 || uSplit != vec2(0.0)) {
+  if (uPrism > 0.0) {
+    // Dispersion like light through a prism: each sample carries one band of the
+    // spectrum, so edges break into full rainbows rather than red/blue pairs.
+    vec2 base = d * dot(d, d) * uPrism / aspect;
+    vec3 acc = vec3(0.0), wsum = vec3(0.0);
+    for (int i = 0; i < 9; i++) {
+      float t = float(i) / 8.0;
+      vec3 w = spectrum(t);
+      acc += texture(uSrc, srcUv(u + (base + uSplit) * (t * 2.0 - 1.0))).rgb * w;
+      wsum += w;
+    }
+    c = acc / wsum;
+  } else if (uAberr > 0.0 || uSplit != vec2(0.0)) {
     vec2 off = d * dot(d, d) * uAberr / aspect + uSplit;
     c = vec3(texture(uSrc, srcUv(u + off)).r, texture(uSrc, s).g, texture(uSrc, srcUv(u - off)).b);
   } else {
@@ -74,6 +95,36 @@ void main() {
   c = clamp(c + (c - blur) * k, 0.0, 1.0);
 
   vec3 col = mix(c, lut(c), uStrength);
+
+  if (uFlare > 0.0) {
+    // Iridescent rings: hue cycles with glow strength, so halos turn into rainbows.
+    float h = texture(uHalo, u).r;
+    vec3 rings = spectrum(fract(h * 2.2 + length(d) * 1.3)) * smoothstep(0.0, 0.35, h);
+    col = screen(col, rings * h * uFlare * 1.4);
+    // Lens ghosts: highlights mirrored through the centre, tinted by their distance.
+    vec2 g1 = 0.5 - (u - 0.5) * 0.55, g2 = 0.5 - (u - 0.5) * 1.6;
+    // Fade the outer ghost out before it reaches the frame edge (no hard cut-off).
+    vec2 e2 = smoothstep(0.5, 0.36, abs(g2 - 0.5));
+    float gh1 = texture(uHalo, g1).r, gh2 = texture(uHalo, clamp(g2, 0.0, 1.0)).r * e2.x * e2.y;
+    vec3 ghosts = spectrum(fract(length(d) * 2.4 + 0.1)) * gh1 * 0.55 + spectrum(fract(length(d) * 1.7 + 0.55)) * gh2 * 0.35;
+    col = screen(col, ghosts * uFlare);
+  }
+
+  if (uLeak.x > 0.0) {
+    // A dispersed light streak: the spectrum spreads across the band, fading along it.
+    vec2 dir = vec2(cos(uLeak.y), sin(uLeak.y));
+    float along = dot(d, dir);
+    float across = dot(d, vec2(-dir.y, dir.x)) - uLeak.z;
+    float width = 0.09;
+    float band = exp(-across * across / (width * width));
+    float fade = exp(-along * along / 0.12);
+    vec3 light = spectrum(clamp(across / width * 0.45 + 0.5, 0.0, 1.0));
+    col = screen(col, light * band * fade * uLeak.x);
+    // A second, fainter echo, like a reflection inside the glass.
+    float across2 = across + 0.22;
+    float band2 = exp(-across2 * across2 / (width * width * 0.5));
+    col = screen(col, spectrum(clamp(across2 / width * 0.6 + 0.5, 0.0, 1.0)) * band2 * fade * uLeak.x * 0.35);
+  }
 
   if (uFilm > 0.0) {
     // Halation: warm glow around highlights.

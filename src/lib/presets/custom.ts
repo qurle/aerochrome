@@ -56,9 +56,6 @@ const acid = (out: LCh, src: LCh): LCh => {
   return { L: out.L, C, h };
 };
 
-/** Night vision: phosphor-green intensifier tube, shadows lifted and highlights blooming. */
-const nvRamp = ramp([[0, '#000a02'], [0.35, '#1c5e17'], [0.7, '#76d856'], [1, '#f0fff0']]);
-const nightVision = (_out: LCh, src: LCh): LCh => nvRamp(smoothstep(0.04, 1, src.L) * 0.75 + 0.5 * smoothstep(0.75, 1, src.L));
 
 export const custom: Group = {
   id: 'custom',
@@ -84,10 +81,21 @@ export const custom: Group = {
       look: { grade: grade({ contrast: 0.1 }), custom: acid },
     },
     {
-      id: 'custom-night-vision',
-      name: 'Night Vision',
-      film: { grain: 2.2, halation: 1.5, vignette: 2.2, soft: 1.2, fade: 0 },
-      look: { grade: grade({}), custom: nightVision },
+      id: 'custom-prism',
+      name: 'Prism',
+      // Light through glass: rainbow dispersion at the edges, iridescent rings around
+      // highlights, lens ghosts and a dispersed light streak, over an airy, lifted grade.
+      film: { grain: 0.6, halation: 1.6, vignette: 0.4, soft: 1.4, fade: 1 },
+      prism: 0.12,
+      flare: 0.85,
+      leak: [0.45, -32, 0.2],
+      look: {
+        grade: grade({
+          contrast: -0.18, blacks: 0.07, whites: 0.99, saturation: 0.9,
+          skyChroma: 1.15, otherChroma: 0.95,
+          shadowTint: [-0.012, -0.02], highlightTint: [0.012, -0.008],
+        }),
+      },
     },
   ],
 };

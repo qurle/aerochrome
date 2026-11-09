@@ -11,6 +11,12 @@ export interface RenderParams {
   aberration: number;
   /** Linear R/B split as a fraction of the image width/height. */
   split: [number, number];
+  /** Rainbow dispersion towards the edges (replaces the R/B split when > 0). */
+  prism: number;
+  /** Iridescent highlight rings and lens ghosts. */
+  flare: number;
+  /** Prism light leak: amount, angle in degrees, offset across the frame. */
+  leak: [number, number, number];
 }
 
 type GL = WebGL2RenderingContext;
@@ -65,7 +71,7 @@ export class Renderer {
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     this.main = this.program(MAIN_FRAG, ['uSrc', 'uLut', 'uHalo', 'uLutSize', 'uOutRect', 'uSrcRect', 'uSrcTexel',
-      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit']);
+      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak']);
     this.bright = this.program(BRIGHT_FRAG, ['uSrc']);
     this.blur = this.program(BLUR_FRAG, ['uSrc', 'uDir']);
 
@@ -218,6 +224,9 @@ export class Renderer {
     gl.uniform1f(l.uFade, p.film * p.recipe.fade * 0.06);
     gl.uniform1f(l.uAberr, p.aberration);
     gl.uniform2f(l.uSplit, p.split[0], p.split[1]);
+    gl.uniform1f(l.uPrism, p.prism);
+    gl.uniform1f(l.uFlare, p.flare);
+    gl.uniform3f(l.uLeak, p.leak[0], (p.leak[1] * Math.PI) / 180, p.leak[2]);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -239,7 +248,7 @@ export class Renderer {
   ): Promise<Uint8ClampedArray<ArrayBuffer>> {
     const gl = this.gl;
     const [W, H] = size;
-    const margin = 4 + Math.ceil((p.aberration * 0.25 + Math.max(Math.abs(p.split[0]), Math.abs(p.split[1]))) * Math.max(W, H));
+    const margin = 4 + Math.ceil((Math.max(p.aberration, p.prism) * 0.25 + Math.max(Math.abs(p.split[0]), Math.abs(p.split[1]))) * Math.max(W, H));
     const tile = Math.max(256, Math.min(2048, this.maxTexture - 2 * margin));
     const out = new Uint8ClampedArray(W * H * 4);
     const target = this.target(tile, tile);

@@ -18,6 +18,12 @@ export interface Preset {
   aberration?: number;
   /** Linear R/B split as a fraction of image size, e.g. [0.004, 0] (B moves the opposite way). */
   split?: [number, number];
+  /** Rainbow dispersion towards the edges, like light through a prism (try 0.05–0.3). */
+  prism?: number;
+  /** Iridescent rainbow rings around highlights plus mirrored lens ghosts (0..1). */
+  flare?: number;
+  /** Prism light leak: [amount 0..1, angle in degrees, offset across the frame -0.5..0.5]. */
+  leak?: [number, number, number];
 }
 
 export interface Group {

@@ -3,7 +3,7 @@ import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
-import { ALL_PRESETS, findPreset } from './presets';
+import { ALL_PRESETS, findPreset, type Preset } from './presets';
 
 export const DEFAULTS = { strength: 1, sharpen: 0, film: 0.12 };
 const THUMB_PX = 128;
@@ -35,8 +35,13 @@ class Editor {
 
   params(original = false): RenderParams {
     const p = this.preset;
-    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0] };
-    return { strength: this.strength, sharpen: this.sharpen, film: this.film, recipe: p.film, aberration: p.aberration ?? 0, split: p.split ?? [0, 0] };
+    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0] };
+    const fx = spatial(p), k = this.strength;
+    return {
+      strength: k, sharpen: this.sharpen, film: this.film, ...fx,
+      aberration: fx.aberration * k, split: [fx.split[0] * k, fx.split[1] * k], prism: fx.prism * k,
+      flare: fx.flare * k, leak: [fx.leak[0] * k, fx.leak[1], fx.leak[2]],
+    };
   }
 
   attach(canvas: HTMLCanvasElement) {
@@ -98,8 +103,7 @@ class Editor {
       const preset = findPreset(id);
       r.setLut(await this.luts.get(id, r.space, THUMB_LUT));
       if (job !== this.thumbJob) break;
-      r.render({ strength: 1, sharpen: 0, film: 0.1, recipe: preset.film,
-        aberration: preset.aberration ?? 0, split: preset.split ?? [0, 0] }, [side, side]);
+      r.render({ strength: 1, sharpen: 0, film: 0.1, ...spatial(preset) }, [side, side]);
       const bmp = await createImageBitmap(r.canvas as HTMLCanvasElement);
       this.thumbs[id]?.close();
       this.thumbs = { ...this.thumbs, [id]: bmp };
@@ -182,6 +186,18 @@ class Editor {
       .then(() => { this.busy = { kind: 'copied' }; setTimeout(() => (this.busy = null), 1200); })
       .catch((e) => { this.busy = null; this.error = `Copy failed: ${(e as Error).message}`; });
   }
+}
+
+/** Per-preset shader effects (scaled by Strength in `params`). */
+function spatial(p: Preset) {
+  return {
+    recipe: p.film,
+    aberration: p.aberration ?? 0,
+    split: p.split ?? [0, 0],
+    prism: p.prism ?? 0,
+    flare: p.flare ?? 0,
+    leak: p.leak ?? [0, 0, 0],
+  } satisfies Partial<RenderParams>;
 }
 
 function download(file: File) {
