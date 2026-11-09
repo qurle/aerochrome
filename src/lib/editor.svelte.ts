@@ -1,13 +1,13 @@
 import { LUT_SIZE } from './color/lut';
 import { LutCache } from './color/luts';
-import { tweakEffect } from './color/tweak';
+import { TWEAK_NEUTRAL, tweakEffect } from './color/tweak';
 import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
 import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
 
-export const DEFAULTS = { strength: 1, sharpen: 0, film: 0, tweak: 0 };
+export const DEFAULTS = { strength: 1, sharpen: 0, film: 0, tweak: TWEAK_NEUTRAL };
 const THUMB_PX = 128;
 /** Thumbnails use a coarser LUT: 8× cheaper to bake, invisible at 64 px. */
 const THUMB_LUT = 17;
@@ -23,7 +23,7 @@ class Editor {
   comparing = $state(false);
   /** Fullscreen zoomable viewer. */
   fullscreen = $state(false);
-  /** Variation dial, 0–100; 0 = preset as designed. Resets when switching presets. */
+  /** Variation dial, 0–100; 50 = presets as designed. Applies to every preset, thumbnails included. */
   tweak = $state(DEFAULTS.tweak);
   /** LUT currently shown (shared with the fullscreen viewer). */
   currentLut = $state.raw<Float32Array | null>(null);
@@ -81,7 +81,6 @@ class Editor {
   lutVersion = $state(0);
 
   select(id: string) {
-    if (id !== this.presetId) this.tweak = 0;
     this.presetId = id;
     return this.loadLut();
   }
@@ -91,7 +90,11 @@ class Editor {
     if (t === this.tweak) return;
     this.tweak = t;
     void this.loadLut();
+    // Re-render the thumbnails with the new value once scrubbing settles.
+    clearTimeout(this.thumbTimer);
+    this.thumbTimer = window.setTimeout(() => void this.buildThumbs(), 300);
   }
+  private thumbTimer = 0;
 
   private applyLut(lut: Float32Array) {
     this.renderer?.setLut(lut);
@@ -108,12 +111,12 @@ class Editor {
     if (!r) return;
     const job = ++this.selectJob;
     const id = this.presetId, t = this.tweak;
-    if (t) {
+    if (t !== TWEAK_NEUTRAL) {
       const lo = await this.luts.get(id, r.space, THUMB_LUT, true, t, 'tweak-lo');
       if (job !== this.selectJob) return;
       if (lo) this.applyLut(lo);
     }
-    const hi = await this.luts.get(id, r.space, LUT_SIZE, true, t, t ? 'tweak-hi' : undefined);
+    const hi = await this.luts.get(id, r.space, LUT_SIZE, true, t, t !== TWEAK_NEUTRAL ? 'tweak-hi' : undefined);
     if (job !== this.selectJob || !hi) return;
     this.applyLut(hi);
   }
@@ -177,17 +180,24 @@ class Editor {
     for (const id of order) {
       if (job !== this.thumbJob) break;
       const preset = findPreset(id);
-      const lut = await this.luts.get(id, r.space, THUMB_LUT);
+      const t = this.tweak;
+      const lut = await this.luts.get(id, r.space, THUMB_LUT, true, t);
       if (job !== this.thumbJob || !lut) break;
       r.setLut(lut);
-      r.render({ strength: 1, sharpen: 0, film: 0, ...spatial(preset), seed: 3.17 }, [side, side]);
+      const fx = spatial(preset);
+      const e = (ch: number) => tweakEffect(t, ch);
+      r.render({
+        strength: 1, sharpen: 0, film: 0, ...fx, seed: 3.17 + t * 7.31,
+        aberration: fx.aberration * e(0), split: [fx.split[0] * e(1), fx.split[1] * e(1)], prism: fx.prism * e(2),
+        flare: fx.flare * e(3), leak: [fx.leak[0] * e(4), fx.leak[1], fx.leak[2] * e(5)], edge: fx.edge * e(6),
+      }, [side, side]);
       const bmp = await createImageBitmap(r.canvas as HTMLCanvasElement);
       this.thumbs[id]?.close();
       this.thumbs = { ...this.thumbs, [id]: bmp };
     }
     crop.close();
     // Warm the full-size LUTs in the background so switching presets is instant.
-    if (job === this.thumbJob) for (const p of ALL_PRESETS) void this.luts.get(p.id, this.renderer?.space ?? r.space, undefined, false);
+    if (job === this.thumbJob && this.tweak === TWEAK_NEUTRAL) for (const p of ALL_PRESETS) void this.luts.get(p.id, this.renderer?.space ?? r.space, undefined, false);
   }
 
   /** Full pipeline at (up to) `maxSide`, returns RGBA pixels in the working space. */

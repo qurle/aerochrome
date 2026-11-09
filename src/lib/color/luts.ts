@@ -1,6 +1,7 @@
 import { LUT_SIZE } from './lut';
 import type { LutRequest } from './lut.worker';
 import type { WorkingSpace } from './spaces';
+import { TWEAK_NEUTRAL } from './tweak';
 
 interface Job { req: LutRequest; slot?: string; resolve: (d: Float32Array | null) => void; promise: Promise<Float32Array | null> }
 
@@ -15,8 +16,10 @@ export class LutCache {
   private queue: Job[] = [];
   private jobs = new Map<string, Job>();
   private running: Job | null = null;
-  /** Tweaked variations are cached too, but only the most recent few. */
+  /** Tweaked variations are cached too, most recent first, up to a memory budget. */
   private tweaked: string[] = [];
+  private tweakedBytes = 0;
+  private static readonly TWEAKED_BUDGET = 24 * 1024 * 1024;
 
   private getWorker() {
     if (!this.worker) {
@@ -25,9 +28,14 @@ export class LutCache {
         const job = this.running!;
         this.running = null;
         this.done.set(e.data.key, e.data.data);
-        if (job.req.tweak) {
+        if (job.req.tweak !== TWEAK_NEUTRAL) {
           this.tweaked.push(e.data.key);
-          while (this.tweaked.length > 8) this.done.delete(this.tweaked.shift()!);
+          this.tweakedBytes += e.data.data.byteLength;
+          while (this.tweakedBytes > LutCache.TWEAKED_BUDGET && this.tweaked.length > 1) {
+            const old = this.tweaked.shift()!;
+            this.tweakedBytes -= this.done.get(old)?.byteLength ?? 0;
+            this.done.delete(old);
+          }
         }
         this.jobs.delete(e.data.key);
         job.resolve(e.data.data);
@@ -48,7 +56,7 @@ export class LutCache {
    * requests supersede queued ones in the same slot (they resolve to null), so
    * scrubbing a slider doesn't pile up stale work.
    */
-  get(id: string, space: WorkingSpace, size = LUT_SIZE, urgent = true, tweak = 0, slot?: string): Promise<Float32Array | null> {
+  get(id: string, space: WorkingSpace, size = LUT_SIZE, urgent = true, tweak = TWEAK_NEUTRAL, slot?: string): Promise<Float32Array | null> {
     const key = `${id}|${space}|${size}|${tweak}`;
     const hit = this.done.get(key);
     if (hit) return Promise.resolve(hit);

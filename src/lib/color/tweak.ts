@@ -1,5 +1,5 @@
-// "Tweak": a 0–100 variation dial. 0 is the preset exactly as designed; every
-// other value is a reproducible variation. Each parameter follows its own smooth
+// "Tweak": a 0–100 variation dial. 50 is the preset exactly as designed; every
+// other value is a reproducible variation (below and above 50 go different ways). Each parameter follows its own smooth
 // noise curve, so neighbouring values look alike and scrubbing morphs instead of
 // flickering, while far-apart values differ clearly.
 
@@ -10,8 +10,12 @@ const hash = (n: number) => {
   return (x - Math.floor(x)) * 2 - 1;
 };
 
-/** Smooth 1D value noise for channel `k`, zero at t = 0, roughly within -1..1. */
-function curve(k: number, t: number) {
+/** The value at which a look is left exactly as designed. */
+export const TWEAK_NEUTRAL = 50;
+
+/** Smooth 1D value noise for channel `k`, zero at the neutral value, roughly within -1..1. */
+function curve(k: number, tweak: number) {
+  const t = tweak - TWEAK_NEUTRAL;
   const noise = (u: number) => {
     const i = Math.floor(u), f = u - i;
     const s = f * f * (3 - 2 * f);
@@ -46,7 +50,7 @@ const KEYS = Object.keys(SPAN) as NumKey[];
 
 /** Apply variation `t` (0–100) to a look. Pure: same t, same result. */
 export function tweakLook(look: Look, t: number): Look {
-  if (!t) return look;
+  if (t === TWEAK_NEUTRAL) return look;
   const g: Grade = { ...look.grade };
   KEYS.forEach((key, k) => {
     const v = g[key];
@@ -63,4 +67,4 @@ export function tweakLook(look: Look, t: number): Look {
 }
 
 /** Scale factor (around 1) for shader effects such as fringes and flares. */
-export const tweakEffect = (t: number, channel: number) => (t ? 1 + 0.3 * curve(40 + channel, t) : 1);
+export const tweakEffect = (t: number, channel: number) => 1 + 0.3 * curve(40 + channel, t);

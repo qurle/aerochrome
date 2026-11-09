@@ -23,8 +23,9 @@ with MozJPEG in a worker. Copy puts a PNG (max 4096 px) on the clipboard.
 
 ## Using it
 
-- **Tweak** (0–100) gives each preset reproducible variations; 0 is the preset as designed. Type a
-  value to come back to a variation. Neighbouring values look alike, so scrubbing morphs smoothly.
+- **Tweak** (0–100) gives every preset reproducible variations; 50 is the preset as designed and
+  the value applies across presets, thumbnails included. Type a value to come back to a variation.
+  Neighbouring values look alike, so scrubbing morphs smoothly.
 - Click or tap the photo for a fullscreen view: drag to pan; pinch, scroll or double-tap to zoom.
   Zoomed views render from the full-resolution original.
 - On phones, swipe the photo left/right to change preset and drag the handle down to hide the

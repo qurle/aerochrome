@@ -54,7 +54,7 @@
     else if (e.key === 'ArrowUp') editor.stepGroup(-1);
     else if (k === 'o') open();
     else if (k === 'f') editor.fullscreen ? editor.closeFullscreen() : editor.openFullscreen();
-    else if (k === 't') editor.setTweak(e.shiftKey ? 0 : 1 + Math.floor(Math.random() * 100));
+    else if (k === 't') editor.setTweak(e.shiftKey ? DEFAULTS.tweak : Math.floor(Math.random() * 101));
     else return;
     e.preventDefault();
   }
@@ -166,7 +166,7 @@
           steps={100}
           editable
           bind:value={() => editor.tweak / 100, (v) => editor.setTweak(v * 100)}
-          defaultValue={DEFAULTS.tweak}
+          defaultValue={DEFAULTS.tweak / 100}
         />
         <Slider label="Strength" color="var(--coral)" bind:value={editor.strength} defaultValue={DEFAULTS.strength} />
         <Slider label="Sharpen" color="var(--ink)" bind:value={editor.sharpen} defaultValue={DEFAULTS.sharpen} />
