@@ -24,7 +24,6 @@
   const pads = () => (vw < 860 ? { x: 0, t: 0, b: 0 } : { x: 24, t: 72, b: 72 });
   const fitScale = () => { const p = pads(); return Math.min((vw - p.x * 2) / W, (vh - p.t - p.b) / H); };
   const maxScale = () => Math.max(fitScale(), 4 / dpr()); // up to 400% of device pixels
-  const zoomPct = $derived(Math.round(s * dpr() * 100));
   const atFit = $derived(s <= fitScale() * 1.001);
 
   function clampView() {
@@ -276,9 +275,6 @@
     <Button size="sm" label="Hold to see the original" onpointerdown={hold(true)} onpointerup={hold(false)}>
       {editor.comparing ? 'Original' : 'Hold for original'}
     </Button>
-    <Button size="sm" label={atFit ? 'Zoom to 100%' : 'Fit to screen'} onclick={() => toggleZoom()}>
-      {atFit ? 'Fit' : `${zoomPct}%`}
-    </Button>
   </div>
 </div>
 
@@ -308,5 +304,4 @@
     left: 50%;
     translate: -50% 0;
   }
-  .bottom :global(button) { font-variant-numeric: tabular-nums; min-width: 72px; }
 </style>
