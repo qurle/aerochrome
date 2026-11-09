@@ -1,4 +1,4 @@
-import { buildLut } from './color/lut';
+import { LutCache } from './color/luts';
 import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
@@ -26,7 +26,8 @@ class Editor {
   pending = $state<File | null>(null);
   renderer: Renderer | null = null;
 
-  private luts = new Map<string, Float32Array>();
+  private luts = new LutCache();
+  private selectJob = 0;
   private thumbRenderer: Renderer | null = null;
   private thumbJob = 0;
 
@@ -42,24 +43,24 @@ class Editor {
     try {
       this.renderer = new Renderer(canvas);
       if (this.image) this.renderer.setSource(this.image.preview);
-      this.renderer.setLut(this.lut(this.presetId));
+      void this.select(this.presetId);
     } catch (e) {
       this.error = (e as Error).message;
     }
   }
 
-  lut(id: string) {
-    let l = this.luts.get(id);
-    if (!l) {
-      l = buildLut(findPreset(id).look, this.renderer?.space ?? 'srgb');
-      this.luts.set(id, l);
-    }
-    return l;
-  }
+  /** Version counter so the viewer re-renders once a LUT lands. */
+  lutVersion = $state(0);
 
-  select(id: string) {
+  async select(id: string) {
     this.presetId = id;
-    this.renderer?.setLut(this.lut(id));
+    const r = this.renderer;
+    if (!r) return;
+    const job = ++this.selectJob;
+    const lut = await this.luts.get(id, r.space);
+    if (job !== this.selectJob) return;
+    r.setLut(lut);
+    this.lutVersion++;
   }
 
   async open(file: File) {
@@ -95,8 +96,8 @@ class Editor {
     for (const id of order) {
       if (job !== this.thumbJob) break;
       const preset = findPreset(id);
-      await new Promise((res) => setTimeout(res, 0));
-      r.setLut(buildLut(preset.look, r.space, THUMB_LUT));
+      r.setLut(await this.luts.get(id, r.space, THUMB_LUT));
+      if (job !== this.thumbJob) break;
       r.render({ strength: 1, sharpen: 0, film: 0.1, recipe: preset.film,
         aberration: preset.aberration ?? 0, split: preset.split ?? [0, 0] }, [side, side]);
       const bmp = await createImageBitmap(r.canvas as HTMLCanvasElement);
@@ -104,6 +105,8 @@ class Editor {
       this.thumbs = { ...this.thumbs, [id]: bmp };
     }
     crop.close();
+    // Warm the full-size LUTs in the background so switching presets is instant.
+    if (job === this.thumbJob) for (const p of ALL_PRESETS) void this.luts.get(p.id, this.renderer?.space ?? r.space);
   }
 
   /** Full pipeline at (up to) `maxSide`, returns RGBA pixels in the working space. */

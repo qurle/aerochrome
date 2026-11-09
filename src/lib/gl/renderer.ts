@@ -130,6 +130,7 @@ export class Renderer {
   }
 
   private lutSize = LUT_SIZE;
+  private hasLut = false;
 
   setLut(data: Float32Array) {
     const gl = this.gl;
@@ -137,6 +138,7 @@ export class Renderer {
     this.lutSize = n;
     gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
     gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, n, n, n, 0, gl.RGBA, gl.FLOAT, data);
+    this.hasLut = true;
   }
 
   private upload(src: TexImageSource & { width: number; height: number }) {
@@ -208,7 +210,8 @@ export class Renderer {
     gl.uniform2f(l.uImageSize, imageSize[0], imageSize[1]);
     gl.uniform2f(l.uOutSize, outW, outH);
     gl.uniform1f(l.uFlipY, target ? 0 : 1);
-    gl.uniform1f(l.uStrength, p.strength);
+    // Until the first LUT arrives from the worker, show the original.
+    gl.uniform1f(l.uStrength, this.hasLut ? p.strength : 0);
     gl.uniform1f(l.uSharpen, p.sharpen);
     gl.uniform1f(l.uFilm, p.film);
     gl.uniform4f(l.uFilmMix, p.recipe.grain, p.recipe.halation, p.recipe.vignette, p.recipe.soft);
