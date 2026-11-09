@@ -35,6 +35,7 @@ uniform float uPrism;   // spectral dispersion: 9 rainbow-tinted samples instead
 uniform float uFlare;   // iridescent glow rings around highlights plus mirrored lens ghosts
 uniform vec3 uLeak;     // prism light spots: amount, count, size
 uniform float uSeed;    // layout of the light spots
+uniform float uEdge;    // rainbow tint on contrast edges, hue following edge direction
 
 vec2 srcUv(vec2 u) { return (u - uSrcRect.xy) / (uSrcRect.zw - uSrcRect.xy); }
 
@@ -55,6 +56,16 @@ vec3 spectrum(float t) {
   return clamp(abs(fract(t * 0.82 + vec3(0.0, 2.0 / 3.0, 1.0 / 3.0)) * 6.0 - 3.0) - 1.0, 0.0, 1.0);
 }
 vec3 screen(vec3 a, vec3 b) { return 1.0 - (1.0 - a) * (1.0 - clamp(b, 0.0, 1.0)); }
+
+float luma(vec2 u) { return dot(texture(uSrc, srcUv(u)).rgb, vec3(0.2126, 0.7152, 0.0722)); }
+
+// Sobel gradient of luminance at radius r (full-image uv), aspect-correct.
+vec2 sobel(vec2 u, vec2 r) {
+  float tl = luma(u + vec2(-r.x, -r.y)), t = luma(u + vec2(0.0, -r.y)), tr = luma(u + vec2(r.x, -r.y));
+  float l = luma(u + vec2(-r.x, 0.0)), rr = luma(u + vec2(r.x, 0.0));
+  float bl = luma(u + vec2(-r.x, r.y)), b = luma(u + vec2(0.0, r.y)), br = luma(u + vec2(r.x, r.y));
+  return vec2(tr + 2.0 * rr + br - tl - 2.0 * l - bl, bl + 2.0 * b + br - tl - 2.0 * t - tr);
+}
 
 vec3 lut(vec3 c) {
   vec3 coord = (clamp(c, 0.0, 1.0) * (uLutSize - 1.0) + 0.5) / uLutSize;
@@ -96,6 +107,22 @@ void main() {
   c = clamp(c + (c - blur) * k, 0.0, 1.0);
 
   vec3 col = mix(c, lut(c), uStrength);
+
+  if (uEdge > 0.0) {
+    // Holographic edges: contrast edges pick up a rainbow whose hue follows the
+    // edge direction, so outlines shimmer like light through cut glass. The
+    // radius is a fraction of the frame, so preview and export match.
+    float m = max(uImageSize.x, uImageSize.y);
+    vec2 r = vec2(1.0 / uImageSize.x, 1.0 / uImageSize.y) * m * 0.0024;
+    // Coarse scale only, so fine texture (knit, ripples, leaf detail) stays clean.
+    vec2 g = sobel(u, r);
+    float mag = length(g);
+    float hue = fract(atan(g.y, g.x) / 6.28318 + length(d) * 1.4 + uSeed * 0.13);
+    // Strong outlines next to bright areas only: that's where light would refract.
+    float bright = max(max(luma(u + r * 2.0), luma(u - r * 2.0)), max(luma(u + vec2(r.x, -r.y) * 2.0), luma(u - vec2(r.x, -r.y) * 2.0)));
+    float mask = smoothstep(0.35, 0.9, mag) * smoothstep(0.35, 0.85, bright);
+    col = screen(col, spectrum(hue) * mask * uEdge * 0.85);
+  }
 
   if (uFlare > 0.0) {
     // Iridescent rings: hue cycles with glow strength, so halos turn into rainbows.

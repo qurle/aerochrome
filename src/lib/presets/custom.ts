@@ -84,11 +84,13 @@ export const custom: Group = {
       id: 'custom-prism',
       name: 'Prism',
       // Light through glass: rainbow dispersion at the edges, iridescent rings around
-      // highlights, lens ghosts and scattered rainbow light spots, over an airy, lifted grade.
+      // highlights, lens ghosts, scattered rainbow light spots and holographic edges,
+      // over an airy, lifted grade.
       film: { grain: 0.6, halation: 1.6, vignette: 0.4, soft: 1.4, fade: 1 },
       prism: 0.12,
       flare: 0.85,
       leak: [0.55, 8, 0.12],
+      edge: 0.7,
       look: {
         grade: grade({
           contrast: -0.18, blacks: 0.07, whites: 0.99, saturation: 0.9,

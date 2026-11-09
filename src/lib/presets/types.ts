@@ -24,6 +24,8 @@ export interface Preset {
   flare?: number;
   /** Scattered prism light spots: [amount 0..1, count up to 12, size as a fraction of the frame ~0.05–0.2]. Layout is random per photo. */
   leak?: [number, number, number];
+  /** Rainbow tint on contrast edges, hue following edge direction (0..1). */
+  edge?: number;
 }
 
 export interface Group {

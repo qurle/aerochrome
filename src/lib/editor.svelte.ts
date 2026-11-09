@@ -37,12 +37,12 @@ class Editor {
 
   params(original = false): RenderParams {
     const p = this.preset;
-    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0 };
+    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0 };
     const fx = spatial(p), k = this.strength;
     return {
       strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: this.seed,
       aberration: fx.aberration * k, split: [fx.split[0] * k, fx.split[1] * k], prism: fx.prism * k,
-      flare: fx.flare * k, leak: [fx.leak[0] * k, fx.leak[1], fx.leak[2]],
+      flare: fx.flare * k, leak: [fx.leak[0] * k, fx.leak[1], fx.leak[2]], edge: fx.edge * k,
     };
   }
 
@@ -60,7 +60,7 @@ class Editor {
   lutVersion = $state(0);
 
   async select(id: string) {
-    if (id === this.presetId && findPreset(id).leak) this.seed = Math.random() * 100;
+    if (id === this.presetId && (findPreset(id).leak || findPreset(id).edge)) this.seed = Math.random() * 100;
     this.presetId = id;
     const r = this.renderer;
     if (!r) return;
@@ -201,6 +201,7 @@ function spatial(p: Preset) {
     prism: p.prism ?? 0,
     flare: p.flare ?? 0,
     leak: p.leak ?? [0, 0, 0],
+    edge: p.edge ?? 0,
   } satisfies Partial<RenderParams>;
 }
 
