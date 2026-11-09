@@ -57,13 +57,20 @@ class Editor {
   }
 
   attach(canvas: HTMLCanvasElement) {
-    try {
-      this.renderer = new Renderer(canvas);
-      if (this.image) this.renderer.setSource(this.image.preview);
-      void this.select(this.presetId);
-    } catch (e) {
-      this.error = (e as Error).message;
-    }
+    const init = () => {
+      try {
+        this.renderer = new Renderer(canvas);
+        if (this.image) this.renderer.setSource(this.image.preview);
+        void this.select(this.presetId);
+      } catch (e) {
+        this.error = (e as Error).message;
+      }
+    };
+    // Mobile browsers may drop the GPU context (memory pressure, tab switch).
+    // Ask for it back and rebuild everything when it returns.
+    canvas.addEventListener('webglcontextlost', (e) => { e.preventDefault(); this.renderer = null; });
+    canvas.addEventListener('webglcontextrestored', () => { init(); this.lutVersion++; });
+    init();
   }
 
   /** Open fullscreen; adds a history entry so Back (or the Android back gesture) closes it. */

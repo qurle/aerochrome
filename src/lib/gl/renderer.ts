@@ -57,7 +57,10 @@ export class Renderer {
   private bright: Program;
   private blur: Program;
   private vao: WebGLVertexArrayObject;
-  private lutTex: WebGLTexture;
+  /** One immutable 3D texture per LUT size, updated in place (see setLut). */
+  private lutTex: WebGLTexture | null = null;
+  private lutTextures = new Map<number, WebGLTexture>();
+  private lutBytes = new Map<number, Uint8Array>();
   private srcTex: WebGLTexture;
   /** Optional full-resolution crop for the fullscreen viewer. */
   private detailTex: WebGLTexture;
@@ -89,11 +92,6 @@ export class Renderer {
     gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([-1, -1, 3, -1, -1, 3]), gl.STATIC_DRAW);
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
-
-    this.lutTex = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
-    for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
-    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
 
     this.srcTex = this.texture2d();
     this.detailTex = this.texture2d();
@@ -146,12 +144,37 @@ export class Renderer {
   private lutSize = LUT_SIZE;
   private hasLut = false;
 
+  /**
+   * Upload a LUT. Each size gets one immutable RGBA8 texture that is only ever
+   * updated in place: re-allocating float 3D textures at changing sizes (as
+   * Tweak does while scrubbing) made some mobile GPUs sample black. 8-bit
+   * entries are plenty, since the output is 8-bit and filtering interpolates.
+   */
   setLut(data: Float32Array) {
     const gl = this.gl;
     const n = Math.round(Math.cbrt(data.length / 4));
+    if (n < 2 || n * n * n * 4 !== data.length) return; // malformed: keep the current LUT
+    let bytes = this.lutBytes.get(n);
+    if (!bytes) this.lutBytes.set(n, (bytes = new Uint8Array(data.length)));
+    for (let i = 0; i < data.length; i++) {
+      const v = data[i];
+      bytes[i] = v > 0 ? (v < 1 ? Math.round(v * 255) : 255) : 0; // also maps NaN to 0
+    }
+    let tex = this.lutTextures.get(n);
+    if (!tex) {
+      tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_3D, tex);
+      gl.texStorage3D(gl.TEXTURE_3D, 1, gl.RGBA8, n, n, n);
+      for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
+      for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
+      this.lutTextures.set(n, tex);
+    }
+    gl.bindTexture(gl.TEXTURE_3D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, n, n, n, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    this.lutTex = tex;
     this.lutSize = n;
-    gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, n, n, n, 0, gl.RGBA, gl.FLOAT, data);
     this.hasLut = true;
   }
 
