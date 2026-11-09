@@ -106,7 +106,7 @@ class Editor {
     }
     crop.close();
     // Warm the full-size LUTs in the background so switching presets is instant.
-    if (job === this.thumbJob) for (const p of ALL_PRESETS) void this.luts.get(p.id, this.renderer?.space ?? r.space);
+    if (job === this.thumbJob) for (const p of ALL_PRESETS) void this.luts.get(p.id, this.renderer?.space ?? r.space, undefined, false);
   }
 
   /** Full pipeline at (up to) `maxSide`, returns RGBA pixels in the working space. */
