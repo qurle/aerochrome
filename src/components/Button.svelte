@@ -3,18 +3,35 @@
 
   let {
     variant = 'outline',
+    size = 'md',
     disabled = false,
+    label,
     onclick,
+    onpointerdown,
+    onpointerup,
     children,
   }: {
     variant?: 'outline' | 'outline-accent' | 'accent';
+    size?: 'md' | 'sm';
     disabled?: boolean;
+    label?: string;
     onclick?: (e: MouseEvent) => void;
+    onpointerdown?: (e: PointerEvent) => void;
+    onpointerup?: (e: PointerEvent) => void;
     children: Snippet;
   } = $props();
 </script>
 
-<button class={variant} {disabled} {onclick}>{@render children()}</button>
+<button
+  class="{variant} {size}"
+  {disabled}
+  aria-label={label}
+  {onclick}
+  {onpointerdown}
+  {onpointerup}
+  onpointercancel={onpointerup}
+  onpointerleave={onpointerup}
+>{@render children()}</button>
 
 <style>
   button {
@@ -30,6 +47,7 @@
     font-variant-numeric: tabular-nums;
     transition: opacity 0.15s, background-color 0.15s;
   }
+  .sm { padding: 8px 16px; font-size: 14px; background: var(--bg); }
   .outline-accent { border-color: var(--accent); color: var(--accent); }
   .accent { border-color: var(--accent); background: var(--accent); color: var(--bg); }
   button:not(:disabled):active { opacity: 0.8; }

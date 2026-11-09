@@ -47,7 +47,6 @@
     });
   });
 
-  const hold = (on: boolean) => () => { if (editor.image) editor.comparing = on; };
 </script>
 
 <div class="box" bind:this={box}>
@@ -59,10 +58,8 @@
         class:hidden={!editor.image}
         style:width="{fit.w}px"
         style:height="{fit.h}px"
-        onpointerdown={hold(true)}
-        onpointerup={hold(false)}
-        onpointercancel={hold(false)}
-        onpointerleave={hold(false)}
+        title="Open fullscreen"
+        onclick={() => editor.openFullscreen()}
         oncontextmenu={(e) => e.preventDefault()}
       ></canvas>
       {#if !editor.image}
@@ -92,7 +89,7 @@
   .placeholder { min-width: min(100%, 280px); }
   canvas {
     display: block;
-    cursor: pointer;
+    cursor: zoom-in;
     touch-action: manipulation;
     user-select: none;
     -webkit-user-select: none;

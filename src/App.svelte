@@ -1,5 +1,6 @@
 <script lang="ts">
   import Button from './components/Button.svelte';
+  import Fullscreen from './components/Fullscreen.svelte';
   import Slider from './components/Slider.svelte';
   import Thumb from './components/Thumb.svelte';
   import Viewer from './components/Viewer.svelte';
@@ -57,7 +58,10 @@
   ondragover={(e) => { e.preventDefault(); dragging = true; }}
   ondragleave={(e) => { if (!e.relatedTarget) dragging = false; }}
   ondrop={drop}
+  onpopstate={() => (editor.fullscreen = false)}
 />
+
+{#if editor.fullscreen && editor.image}<Fullscreen />{/if}
 
 <input bind:this={input} type="file" accept="image/*,.heic,.heif" hidden onchange={picked} />
 

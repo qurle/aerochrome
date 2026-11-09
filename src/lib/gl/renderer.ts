@@ -59,6 +59,9 @@ export class Renderer {
   private vao: WebGLVertexArrayObject;
   private lutTex: WebGLTexture;
   private srcTex: WebGLTexture;
+  /** Optional full-resolution crop for the fullscreen viewer. */
+  private detailTex: WebGLTexture;
+  private detailSize: [number, number] = [1, 1];
   private haloA: Target;
   private haloB: Target;
   private srcSize: [number, number] = [1, 1];
@@ -93,6 +96,7 @@ export class Renderer {
     for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
 
     this.srcTex = this.texture2d();
+    this.detailTex = this.texture2d();
     this.haloA = this.target(HALO_SIZE, HALO_SIZE);
     this.haloB = this.target(HALO_SIZE, HALO_SIZE);
   }
@@ -204,10 +208,11 @@ export class Renderer {
 
   private drawMain(
     target: Target | null, outW: number, outH: number, p: RenderParams,
-    imageSize: [number, number], outRect: number[], srcRect: number[],
+    imageSize: [number, number], outRect: number[], srcRect: number[], useDetail = false,
   ) {
     const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    const size = useDetail ? this.detailSize : this.srcSize;
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, useDetail ? this.detailTex : this.srcTex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.haloA.tex);
     gl.activeTexture(gl.TEXTURE0);
@@ -216,7 +221,7 @@ export class Renderer {
     gl.uniform1f(l.uLutSize, this.lutSize);
     gl.uniform4fv(l.uOutRect, outRect);
     gl.uniform4fv(l.uSrcRect, srcRect);
-    gl.uniform2f(l.uSrcTexel, 1 / this.srcSize[0], 1 / this.srcSize[1]);
+    gl.uniform2f(l.uSrcTexel, 1 / size[0], 1 / size[1]);
     gl.uniform2f(l.uImageSize, imageSize[0], imageSize[1]);
     gl.uniform2f(l.uOutSize, outW, outH);
     gl.uniform1f(l.uFlipY, target ? 0 : 1);
@@ -240,6 +245,31 @@ export class Renderer {
   render(p: RenderParams, imageSize: [number, number], crop: number[] = [0, 0, 1, 1]) {
     const c = this.canvas;
     this.drawMain(null, c.width, c.height, p, imageSize, crop, [0, 0, 1, 1]);
+  }
+
+  /** Free GPU memory right away instead of waiting for garbage collection. */
+  dispose() {
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+
+  /** Upload a full-resolution crop covering `rect` (full-image uv) for sharp zoomed views. */
+  setDetail(src: TexImageSource & { width: number; height: number }) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.detailTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    this.detailSize = [src.width, src.height];
+  }
+
+  /**
+   * Render the region `view` (full-image uv) to the whole canvas. Without
+   * `detailRect` it samples the preview (fast, for gestures); with it, the
+   * detail texture uploaded by `setDetail` that covers `detailRect`.
+   */
+  renderView(p: RenderParams, imageSize: [number, number], view: number[], detailRect?: number[]) {
+    const c = this.canvas;
+    this.drawMain(null, c.width, c.height, p, imageSize, view, detailRect ?? [0, 0, 1, 1], !!detailRect);
   }
 
   /**

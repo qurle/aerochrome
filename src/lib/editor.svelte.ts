@@ -19,6 +19,8 @@ class Editor {
   sharpen = $state(DEFAULTS.sharpen);
   film = $state(DEFAULTS.film);
   comparing = $state(false);
+  /** Fullscreen zoomable viewer. */
+  fullscreen = $state(false);
   /** Layout of random effects (prism light spots); new per photo, re-rolled by tapping the selected preset. */
   seed = $state(Math.random() * 100);
   busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number }>(null);
@@ -54,6 +56,24 @@ class Editor {
     } catch (e) {
       this.error = (e as Error).message;
     }
+  }
+
+  /** Full-size LUT for any renderer (cached, baked in the worker). */
+  lutFor(id: string, space: Renderer['space']) {
+    return this.luts.get(id, space);
+  }
+
+  /** Open fullscreen; adds a history entry so Back (or the Android back gesture) closes it. */
+  openFullscreen() {
+    if (!this.image || this.fullscreen) return;
+    this.fullscreen = true;
+    history.pushState({ aerochromeFullscreen: true }, '');
+  }
+
+  closeFullscreen() {
+    if (!this.fullscreen) return;
+    if (history.state?.aerochromeFullscreen) history.back(); // popstate sets fullscreen = false
+    else this.fullscreen = false;
   }
 
   /** Version counter so the viewer re-renders once a LUT lands. */
