@@ -4,13 +4,13 @@
 
 import {
   type LCh, type Space, type Vec3,
-  clamp01, hueBand, hueDelta, labToLch, lchToLab, lchToLinearInGamut, linSrgbToOklab, mix, smoothstep, toLinear,
+  clamp01, hueBand, hueDelta, labToLch, lchToLab, lchToLinearInGamut, mix, oklabRamp, smoothstep,
 } from './spaces';
 
 export type { LCh } from './spaces';
 
 export interface Grade {
-  /** Target hue for vegetation and how much of the original hue spread to keep. */
+  /** Target hue for vegetation (NaN keeps the original hue) and how much of the original spread to keep. */
   foliageHue: number;
   foliageSpread: number;
   foliageChroma: number;     // chroma multiplier for vegetation
@@ -74,7 +74,7 @@ export interface Look {
 }
 
 const NEUTRAL: Grade = {
-  foliageHue: 25, foliageSpread: 0.3, foliageChroma: 1, foliageChromaMin: 0, foliageLift: 0,
+  foliageHue: NaN, foliageSpread: 0.3, foliageChroma: 1, foliageChromaMin: 0, foliageLift: 0,
   skyHue: 250, skyHueAmount: 0, skyDepth: 0, skyChroma: 1,
   cyanHue: 210, cyanAmount: 0,
   skinPale: 0, otherChroma: 1, tintA: 0, tintB: 0,
@@ -110,8 +110,10 @@ function applyGrade(space: Space, lin: Vec3, g: Grade): LCh {
 
   // Vegetation: rotate towards the target hue, keep some of the original spread.
   if (wf > 0) {
-    const target = g.foliageHue + hueDelta(125, h) * g.foliageSpread;
-    h = h + hueDelta(h, target) * wf;
+    if (!Number.isNaN(g.foliageHue)) {
+      const target = g.foliageHue + hueDelta(125, h) * g.foliageSpread;
+      h = h + hueDelta(h, target) * wf;
+    }
     C = mix(C, Math.max(C * g.foliageChroma, g.foliageChromaMin), wf);
     L = L + g.foliageLift * wf * (1 - L) * smoothstep(0.08, 0.4, c.L);
   }
@@ -147,26 +149,12 @@ function applyGrade(space: Space, lin: Vec3, g: Grade): LCh {
   return labToLch([L, a, b]);
 }
 
-const hexToLab = (hex: string): Vec3 => {
-  const n = parseInt(hex.replace('#', ''), 16);
-  const lin = [(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => toLinear(v / 255)) as Vec3;
-  return linSrgbToOklab(lin);
-};
-
-function applyMap(c: LCh, m: GradientMap, cache: Map<GradientMap, { at: number; lab: Vec3 }[]>): LCh {
-  let stops = cache.get(m);
-  if (!stops) {
-    stops = m.stops.map((s) => ({ at: s.at, lab: hexToLab(s.color) }));
-    cache.set(m, stops);
-  }
-  const t = clamp01(c.L);
-  let i = 0;
-  while (i < stops.length - 2 && t > stops[i + 1].at) i++;
-  const s0 = stops[i], s1 = stops[Math.min(i + 1, stops.length - 1)];
-  const f = s1.at > s0.at ? clamp01((t - s0.at) / (s1.at - s0.at)) : 0;
-  const ramp = s0.lab.map((v, k) => mix(v, s1.lab[k], f)) as Vec3;
+function applyMap(c: LCh, m: GradientMap, cache: Map<GradientMap, (t: number) => Vec3>): LCh {
+  let ramp = cache.get(m);
+  if (!ramp) cache.set(m, (ramp = oklabRamp(m.stops)));
+  const target = ramp(c.L);
   const cur = lchToLab(c);
-  return labToLch(cur.map((v, k) => mix(v, ramp[k], m.amount)) as Vec3);
+  return labToLch([mix(cur[0], target[0], m.amount), mix(cur[1], target[1], m.amount), mix(cur[2], target[2], m.amount)]);
 }
 
 /**
@@ -186,7 +174,7 @@ function applyFilm(space: Space, lin: Vec3, f: FilmShift): Vec3 {
   return [clamp01(nir), clamp01(r), clamp01(g)];
 }
 
-const mapCache = new Map<GradientMap, { at: number; lab: Vec3 }[]>();
+const mapCache = new Map<GradientMap, (t: number) => Vec3>();
 
 export function evalLook(space: Space, look: Look, lin: Vec3): Vec3 {
   const shifted = look.film ? applyFilm(space, lin, look.film) : lin;

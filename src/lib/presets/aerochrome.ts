@@ -24,7 +24,8 @@ export const aerochrome: Group = {
       film: { ...filmDefault, grain: 1.2, halation: 1.2 },
       look: {
         film: { vegNir: 3.2, blueAbsorb: 0.65, warmNir: 0.3 },
-        grade: grade({ skyDepth: 0.25, skyChroma: 1.2, otherChroma: 1.05, tintA: 0.004, contrast: 0.14 }),
+        // After the channel shift, skin lands in the foliage band; rotating it to red keeps faces warm.
+        grade: grade({ foliageHue: 25, skyDepth: 0.25, skyChroma: 1.2, otherChroma: 1.05, tintA: 0.004, contrast: 0.14 }),
       },
     },
     {

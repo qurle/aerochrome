@@ -38,7 +38,7 @@ export function linSrgbToOklab([r, g, b]: Vec3): Vec3 {
     0.0259040371 * l + 0.7827717662 * m - 0.808675766 * s,
   ];
 }
-function oklabToLinSrgb([L, a, b]: Vec3): Vec3 {
+export function oklabToLinSrgb([L, a, b]: Vec3): Vec3 {
   const l = (L + 0.3963377774 * a + 0.2158037573 * b) ** 3;
   const m = (L - 0.1055613458 * a - 0.0638541728 * b) ** 3;
   const s = (L - 0.0894841775 * a - 1.291485548 * b) ** 3;
@@ -105,4 +105,23 @@ export function lchToLinearInGamut(space: Space, lch: LCh): Vec3 {
   }
   rgb = space.fromOklab(lchToLab({ ...lch, C: lo }));
   return [clamp01(rgb[0]), clamp01(rgb[1]), clamp01(rgb[2])];
+}
+
+/** sRGB hex (#rrggbb) → OKLab. */
+export function hexToOklab(hex: string): Vec3 {
+  const n = parseInt(hex.replace('#', ''), 16);
+  return linSrgbToOklab([(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => toLinear(v / 255)) as Vec3);
+}
+
+/** Colour ramp interpolated in OKLab over t in 0..1. Stops must be sorted by position. */
+export function oklabRamp(stops: { at: number; color: string }[]): (t: number) => Vec3 {
+  const s = stops.map((st) => ({ at: st.at, lab: hexToOklab(st.color) }));
+  return (t) => {
+    t = clamp01(t);
+    let i = 0;
+    while (i < s.length - 2 && t > s[i + 1].at) i++;
+    const a = s[i], b = s[Math.min(i + 1, s.length - 1)];
+    const f = b.at > a.at ? clamp01((t - a.at) / (b.at - a.at)) : 0;
+    return [mix(a.lab[0], b.lab[0], f), mix(a.lab[1], b.lab[1], f), mix(a.lab[2], b.lab[2], f)];
+  };
 }

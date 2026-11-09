@@ -1,23 +1,11 @@
 import { grade, type LCh } from '../color/looks';
-import { clamp01, hueBand, labToLch, linSrgbToOklab, mix, smoothstep, toLinear, type Vec3 } from '../color/spaces';
+import { clamp01, hueBand, labToLch, mix, oklabRamp, smoothstep } from '../color/spaces';
 import { filmDefault, type Group } from './types';
-
-const hexLab = (hex: string): Vec3 => {
-  const n = parseInt(hex.replace('#', ''), 16);
-  return linSrgbToOklab([(n >> 16) & 255, (n >> 8) & 255, n & 255].map((v) => toLinear(v / 255)) as Vec3);
-};
 
 /** Colour ramp in OKLab over t in 0..1 (stops sorted by position). */
 const ramp = (stops: [number, string][]) => {
-  const s = stops.map(([at, c]) => ({ at, lab: hexLab(c) }));
-  return (t: number): LCh => {
-    t = clamp01(t);
-    let i = 0;
-    while (i < s.length - 2 && t > s[i + 1].at) i++;
-    const a = s[i], b = s[i + 1];
-    const f = clamp01((t - a.at) / (b.at - a.at));
-    return labToLch(a.lab.map((v, k) => mix(v, b.lab[k], f)) as Vec3);
-  };
+  const r = oklabRamp(stops.map(([at, color]) => ({ at, color })));
+  return (t: number): LCh => labToLch(r(t));
 };
 
 /** Soft posterisation into n bands; `edge` 0 = hard steps, 0.5 = no steps. */
