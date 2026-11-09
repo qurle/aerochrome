@@ -30,6 +30,7 @@ uniform float uFilm;
 uniform vec4 uFilmMix;   // grain, halation, vignette, soft
 uniform float uFade;
 uniform float uAberr;
+uniform vec2 uSplit;    // linear R/B offset in full-image uv (B gets the opposite)
 
 vec2 srcUv(vec2 u) { return (u - uSrcRect.xy) / (uSrcRect.zw - uSrcRect.xy); }
 
@@ -59,8 +60,8 @@ void main() {
   vec2 aspect = vec2(uImageSize.x / max(uImageSize.x, uImageSize.y), uImageSize.y / max(uImageSize.x, uImageSize.y));
   vec2 d = (u - 0.5) * aspect;
   vec3 c;
-  if (uAberr > 0.0) {
-    vec2 off = d * dot(d, d) * uAberr / aspect;
+  if (uAberr > 0.0 || uSplit != vec2(0.0)) {
+    vec2 off = d * dot(d, d) * uAberr / aspect + uSplit;
     c = vec3(texture(uSrc, srcUv(u + off)).r, texture(uSrc, s).g, texture(uSrc, srcUv(u - off)).b);
   } else {
     c = texture(uSrc, s).rgb;

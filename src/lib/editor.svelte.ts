@@ -7,6 +7,8 @@ import { ALL_PRESETS, findPreset } from './presets';
 
 export const DEFAULTS = { strength: 1, sharpen: 0, film: 0.12 };
 const THUMB_PX = 128;
+/** Thumbnails use a coarser LUT: 8× cheaper to bake, invisible at 64 px. */
+const THUMB_LUT = 17;
 const COPY_MAX = 4096;
 const JPEG_QUALITY = 96;
 
@@ -32,8 +34,8 @@ class Editor {
 
   params(original = false): RenderParams {
     const p = this.preset;
-    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0 };
-    return { strength: this.strength, sharpen: this.sharpen, film: this.film, recipe: p.film, aberration: p.aberration ?? 0 };
+    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0] };
+    return { strength: this.strength, sharpen: this.sharpen, film: this.film, recipe: p.film, aberration: p.aberration ?? 0, split: p.split ?? [0, 0] };
   }
 
   attach(canvas: HTMLCanvasElement) {
@@ -93,10 +95,10 @@ class Editor {
     for (const id of order) {
       if (job !== this.thumbJob) break;
       const preset = findPreset(id);
-      if (!this.luts.has(id)) await new Promise((res) => setTimeout(res, 0));
-      r.setLut(this.luts.get(id) ?? this.lut(id));
-      r.render({ strength: 1, sharpen: 0, film: 0.1, recipe: preset.film, aberration: preset.aberration ?? 0 },
-        [side, side]);
+      await new Promise((res) => setTimeout(res, 0));
+      r.setLut(buildLut(preset.look, r.space, THUMB_LUT));
+      r.render({ strength: 1, sharpen: 0, film: 0.1, recipe: preset.film,
+        aberration: preset.aberration ?? 0, split: preset.split ?? [0, 0] }, [side, side]);
       const bmp = await createImageBitmap(r.canvas as HTMLCanvasElement);
       this.thumbs[id]?.close();
       this.thumbs = { ...this.thumbs, [id]: bmp };
