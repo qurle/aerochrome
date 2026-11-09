@@ -1,5 +1,6 @@
 import type { WorkingSpace } from '../color/spaces';
 import { LUT_SIZE } from '../color/lut';
+import type { LutData } from '../color/luts';
 import type { FilmRecipe } from '../presets';
 import { BLUR_FRAG, BRIGHT_FRAG, MAIN_FRAG, VERT } from './shaders';
 
@@ -15,6 +16,8 @@ export interface RenderParams {
   prism: number;
   /** Iridescent highlight rings and lens ghosts. */
   flare: number;
+  /** Tweak blend weights for the four directions (used when a LUT set is loaded). */
+  blend: [number, number, number, number];
   /** Prism light spots: amount, count (≤ 12), size as a fraction of the frame. */
   leak: [number, number, number];
   /** Random layout for the light spots. */
@@ -57,8 +60,14 @@ export class Renderer {
   private bright: Program;
   private blur: Program;
   private vao: WebGLVertexArrayObject;
-  private lutTex: WebGLTexture;
+  /** One immutable 3D texture per LUT size, updated in place (see setLut). */
+  private lutTex: WebGLTexture | null = null;
+  private lutTextures = new Map<string, WebGLTexture>();
+  private lutSlices = 1;
   private srcTex: WebGLTexture;
+  /** Optional full-resolution crop for the fullscreen viewer. */
+  private detailTex: WebGLTexture;
+  private detailSize: [number, number] = [1, 1];
   private haloA: Target;
   private haloB: Target;
   private srcSize: [number, number] = [1, 1];
@@ -75,7 +84,7 @@ export class Renderer {
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     this.main = this.program(MAIN_FRAG, ['uSrc', 'uLut', 'uHalo', 'uLutSize', 'uOutRect', 'uSrcRect', 'uSrcTexel',
-      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed', 'uEdge']);
+      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed', 'uEdge', 'uLutSlices', 'uBlend']);
     this.bright = this.program(BRIGHT_FRAG, ['uSrc']);
     this.blur = this.program(BLUR_FRAG, ['uSrc', 'uDir']);
 
@@ -87,12 +96,8 @@ export class Renderer {
     gl.enableVertexAttribArray(0);
     gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
 
-    this.lutTex = gl.createTexture()!;
-    gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
-    for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
-    for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
-
     this.srcTex = this.texture2d();
+    this.detailTex = this.texture2d();
     this.haloA = this.target(HALO_SIZE, HALO_SIZE);
     this.haloB = this.target(HALO_SIZE, HALO_SIZE);
   }
@@ -142,12 +147,32 @@ export class Renderer {
   private lutSize = LUT_SIZE;
   private hasLut = false;
 
-  setLut(data: Float32Array) {
+  /**
+   * Upload a LUT (or a Tweak set of stacked slices). Each shape gets one
+   * immutable RGBA8 texture that is only ever updated in place: re-allocating
+   * float 3D textures at changing sizes made some mobile GPUs sample black.
+   */
+  setLut(lut: LutData) {
     const gl = this.gl;
-    const n = Math.round(Math.cbrt(data.length / 4));
+    const { data, n, slices } = lut;
+    if (n < 2 || slices < 1 || n * n * n * 4 * slices !== data.length) return; // malformed: keep the current LUT
+    const shape = `${n}x${slices}`;
+    let tex = this.lutTextures.get(shape);
+    if (!tex) {
+      tex = gl.createTexture()!;
+      gl.bindTexture(gl.TEXTURE_3D, tex);
+      gl.texStorage3D(gl.TEXTURE_3D, 1, gl.RGBA8, n, n, n * slices);
+      for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
+      for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
+      this.lutTextures.set(shape, tex);
+    }
+    gl.bindTexture(gl.TEXTURE_3D, tex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, n, n, n * slices, gl.RGBA, gl.UNSIGNED_BYTE, data);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
+    this.lutTex = tex;
     this.lutSize = n;
-    gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, n, n, n, 0, gl.RGBA, gl.FLOAT, data);
+    this.lutSlices = slices;
     this.hasLut = true;
   }
 
@@ -204,19 +229,22 @@ export class Renderer {
 
   private drawMain(
     target: Target | null, outW: number, outH: number, p: RenderParams,
-    imageSize: [number, number], outRect: number[], srcRect: number[],
+    imageSize: [number, number], outRect: number[], srcRect: number[], useDetail = false,
   ) {
     const gl = this.gl;
-    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, this.srcTex);
+    const size = useDetail ? this.detailSize : this.srcSize;
+    gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, useDetail ? this.detailTex : this.srcTex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.haloA.tex);
     gl.activeTexture(gl.TEXTURE0);
     const l = this.pass(this.main, target, outW, outH);
     gl.uniform1i(l.uSrc, 0); gl.uniform1i(l.uLut, 1); gl.uniform1i(l.uHalo, 2);
     gl.uniform1f(l.uLutSize, this.lutSize);
+    gl.uniform1f(l.uLutSlices, this.lutSlices);
+    gl.uniform4f(l.uBlend, p.blend[0], p.blend[1], p.blend[2], p.blend[3]);
     gl.uniform4fv(l.uOutRect, outRect);
     gl.uniform4fv(l.uSrcRect, srcRect);
-    gl.uniform2f(l.uSrcTexel, 1 / this.srcSize[0], 1 / this.srcSize[1]);
+    gl.uniform2f(l.uSrcTexel, 1 / size[0], 1 / size[1]);
     gl.uniform2f(l.uImageSize, imageSize[0], imageSize[1]);
     gl.uniform2f(l.uOutSize, outW, outH);
     gl.uniform1f(l.uFlipY, target ? 0 : 1);
@@ -240,6 +268,31 @@ export class Renderer {
   render(p: RenderParams, imageSize: [number, number], crop: number[] = [0, 0, 1, 1]) {
     const c = this.canvas;
     this.drawMain(null, c.width, c.height, p, imageSize, crop, [0, 0, 1, 1]);
+  }
+
+  /** Free GPU memory right away instead of waiting for garbage collection. */
+  dispose() {
+    this.gl.getExtension('WEBGL_lose_context')?.loseContext();
+  }
+
+  /** Upload a full-resolution crop covering `rect` (full-image uv) for sharp zoomed views. */
+  setDetail(src: TexImageSource & { width: number; height: number }) {
+    const gl = this.gl;
+    gl.bindTexture(gl.TEXTURE_2D, this.detailTex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
+    gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, gl.RGBA, gl.UNSIGNED_BYTE, src);
+    this.detailSize = [src.width, src.height];
+  }
+
+  /**
+   * Render the region `view` (full-image uv) to the whole canvas. Without
+   * `detailRect` it samples the preview (fast, for gestures); with it, the
+   * detail texture uploaded by `setDetail` that covers `detailRect`.
+   */
+  renderView(p: RenderParams, imageSize: [number, number], view: number[], detailRect?: number[]) {
+    const c = this.canvas;
+    this.drawMain(null, c.width, c.height, p, imageSize, view, detailRect ?? [0, 0, 1, 1], !!detailRect);
   }
 
   /**

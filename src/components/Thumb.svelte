@@ -8,6 +8,7 @@
   }: { bitmap?: ImageBitmap; selected?: boolean; label: string; disabled?: boolean; onclick?: () => void } = $props();
 
   let canvas: HTMLCanvasElement | undefined = $state();
+  let shown = $state(false);
 
   $effect(() => {
     if (!canvas || !bitmap) return;
@@ -15,11 +16,12 @@
     canvas.height = bitmap.height;
     const ctx = canvas.getContext('2d', { colorSpace: 'display-p3' });
     ctx?.drawImage(bitmap, 0, 0);
+    requestAnimationFrame(() => (shown = true));
   });
 </script>
 
 <button class="thumb" class:selected {disabled} aria-pressed={selected} aria-label={label} title={label} {onclick}>
-  {#if bitmap}<canvas bind:this={canvas}></canvas>{/if}
+  {#if bitmap}<canvas bind:this={canvas} class:shown></canvas>{/if}
 </button>
 
 <style>
@@ -37,5 +39,6 @@
   }
   .thumb:disabled { cursor: default; }
   .selected { border-radius: 999px; }
-  canvas { display: block; width: 100%; height: 100%; }
+  canvas { display: block; width: 100%; height: 100%; opacity: 0; transition: opacity 0.35s ease-out; }
+  canvas.shown { opacity: 1; }
 </style>

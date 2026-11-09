@@ -15,3 +15,4 @@ export const GROUPS: Group[] = [
 
 export const ALL_PRESETS = GROUPS.flatMap((g) => g.presets);
 export const findPreset = (id: string) => ALL_PRESETS.find((p) => p.id === id) ?? ALL_PRESETS[0];
+export const groupOf = (id: string) => GROUPS.find((g) => g.presets.some((p) => p.id === id)) ?? GROUPS[0];

@@ -17,6 +17,8 @@ uniform sampler2D uSrc;
 uniform sampler3D uLut;
 uniform sampler2D uHalo;
 uniform float uLutSize;
+uniform float uLutSlices; // 1 = base only; 9 = base + (+/−) for 4 Tweak directions
+uniform vec4 uBlend;      // Tweak weights per direction, -1..1
 uniform vec4 uOutRect;   // output region in full-image uv (x0, y0, x1, y1), top-left origin
 uniform vec4 uSrcRect;   // region covered by uSrc, same space
 uniform vec2 uSrcTexel;  // 1 / uSrc size in texels
@@ -67,9 +69,23 @@ vec2 sobel(vec2 u, vec2 r) {
   return vec2(tr + 2.0 * rr + br - tl - 2.0 * l - bl, bl + 2.0 * b + br - tl - 2.0 * t - tr);
 }
 
+// Slices are stacked along depth; keep z inside the slice so filtering never bleeds.
+vec3 lutSlice(vec3 c, float slice) {
+  vec3 p = clamp(c, 0.0, 1.0) * (uLutSize - 1.0) + 0.5;
+  return texture(uLut, vec3(p.xy / uLutSize, (slice * uLutSize + p.z) / (uLutSize * uLutSlices))).rgb;
+}
+
+// Base look plus Tweak: base + sum |w| * (variant - base), picking the + or −
+// variant by the weight's sign. Pre-baked, so scrubbing only changes uBlend.
 vec3 lut(vec3 c) {
-  vec3 coord = (clamp(c, 0.0, 1.0) * (uLutSize - 1.0) + 0.5) / uLutSize;
-  return texture(uLut, coord).rgb;
+  vec3 base = lutSlice(c, 0.0);
+  if (uLutSlices < 2.0) return base;
+  vec3 r = base;
+  for (int j = 0; j < 4; j++) {
+    float w = uBlend[j];
+    if (w != 0.0) r += abs(w) * (lutSlice(c, w > 0.0 ? 1.0 + 2.0 * float(j) : 2.0 + 2.0 * float(j)) - base);
+  }
+  return clamp(r, 0.0, 1.0);
 }
 
 void main() {

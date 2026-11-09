@@ -21,6 +21,28 @@ Colour is processed in Display P3 where the browser supports it (Chrome, Safari)
 embed a P3 ICC profile. Export renders full resolution in tiles and encodes JPEG (q96, 4:4:4)
 with MozJPEG in a worker. Copy puts a PNG (max 4096 px) on the clipboard.
 
+## Using it
+
+- **Tweak** (0–100) gives each preset reproducible variations; 50 is the preset as designed.
+  The value is remembered per preset for the browser session (thumbnails show it) and resets to
+  50 for presets you haven't tweaked. Neighbouring values look alike, so scrubbing morphs smoothly.
+- Click or tap the photo for a fullscreen view: drag to pan; pinch, scroll or double-tap to zoom.
+  Zoomed views render from the full-resolution original.
+- On phones, swipe the photo left/right to change preset and drag the handle down to hide the
+  presets pane.
+
+| Key | Action |
+|---|---|
+| ← / → | Previous / next preset |
+| ↑ / ↓ | Same preset in the previous / next group |
+| T, Shift+T | Random Tweak, reset Tweak |
+| F | Fullscreen (Esc closes) |
+| \\ (hold) | Show the original |
+| O, ⌘/Ctrl+O | Open a photo |
+| ⌘/Ctrl+C | Copy (PNG, max 4096 px) |
+| ⌘/Ctrl+E or S | Export JPEG |
+| + / − / 0 / 1 | Fullscreen: zoom in / out / fit / 100% |
+
 ## Develop
 
 ```bash

@@ -5,37 +5,83 @@
     color,
     defaultValue = 0,
     disabled = false,
-  }: { label: string; value: number; color: string; defaultValue?: number; disabled?: boolean } = $props();
+    steps = 0,
+    editable = false,
+  }: {
+    label: string;
+    value: number;
+    color: string;
+    defaultValue?: number;
+    disabled?: boolean;
+    /** Snap to this many steps (0 = continuous). */
+    steps?: number;
+    /** Show an editable number (0…steps) next to the track. */
+    editable?: boolean;
+  } = $props();
 
   let track: HTMLDivElement;
   let dragging = false;
 
   const clamp = (v: number) => Math.min(1, Math.max(0, v));
+  const snap = (v: number) => (steps ? Math.round(clamp(v) * steps) / steps : clamp(v));
+  const set = (v: number) => { const n = snap(v); if (n !== value) value = n; };
   function setFrom(e: PointerEvent) {
     const r = track.getBoundingClientRect();
-    value = clamp((e.clientX - r.left) / r.width);
+    set((e.clientX - r.left) / r.width);
   }
+  function typed(e: Event) {
+    const el = e.currentTarget as HTMLInputElement;
+    const n = Number(el.value);
+    if (Number.isFinite(n)) set(n / (steps || 100));
+    el.value = String(Math.round(value * (steps || 100)));
+  }
+  // Mouse: press and drag as usual. Touch: nothing happens until the finger
+  // clearly moves sideways (then it drags) or lifts without moving (a tap sets
+  // the value). Vertical swipes are left to the page, so scrolling through the
+  // sliders never changes them.
+  let touch: { x: number; y: number; id: number } | null = null;
   function down(e: PointerEvent) {
     if (disabled) return;
-    dragging = true;
-    track.setPointerCapture(e.pointerId);
-    setFrom(e);
+    if (e.pointerType === 'mouse') {
+      dragging = true;
+      track.setPointerCapture(e.pointerId);
+      setFrom(e);
+    } else {
+      touch = { x: e.clientX, y: e.clientY, id: e.pointerId };
+    }
   }
-  function move(e: PointerEvent) { if (dragging) setFrom(e); }
-  function up() { dragging = false; }
+  function move(e: PointerEvent) {
+    if (dragging) { setFrom(e); return; }
+    if (!touch) return;
+    const dx = e.clientX - touch.x, dy = e.clientY - touch.y;
+    if (Math.abs(dx) > 6 && Math.abs(dx) > Math.abs(dy)) {
+      dragging = true;
+      track.setPointerCapture(touch.id);
+      setFrom(e);
+    } else if (Math.abs(dy) > 6) {
+      touch = null; // vertical: let the page scroll
+    }
+  }
+  function up(e: PointerEvent) {
+    if (touch && !dragging && e.type === 'pointerup') setFrom(e); // tap
+    touch = null;
+    dragging = false;
+  }
   function key(e: KeyboardEvent) {
-    const step = e.shiftKey ? 0.1 : 0.02;
-    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') value = clamp(value + step);
-    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') value = clamp(value - step);
-    else if (e.key === 'Home') value = 0;
-    else if (e.key === 'End') value = 1;
+    const step = (steps ? 1 / steps : 0.02) * (e.shiftKey ? 10 : 1);
+    if (e.key === 'ArrowRight' || e.key === 'ArrowUp') set(value + step);
+    else if (e.key === 'ArrowLeft' || e.key === 'ArrowDown') set(value - step);
+    else if (e.key === 'Home') set(0);
+    else if (e.key === 'End') set(1);
     else return;
     e.preventDefault();
+    e.stopPropagation();
   }
 </script>
 
 <div class="slider" class:disabled>
   <span class="label">{label}</span>
+  <div class="row">
   <div
     bind:this={track}
     class="track"
@@ -51,7 +97,7 @@
     onpointermove={move}
     onpointerup={up}
     onpointercancel={up}
-    ondblclick={() => (value = defaultValue)}
+    ondblclick={() => set(defaultValue)}
     onkeydown={key}
   >
     <div class="fill" style:width="{value * 100}%">
@@ -60,17 +106,42 @@
       {/if}
     </div>
   </div>
+  {#if editable}
+    <input
+      class="value"
+      style:--c={color}
+      type="text"
+      inputmode="numeric"
+      pattern="[0-9]*"
+      maxlength="3"
+      aria-label="{label} value"
+      value={Math.round(value * (steps || 100))}
+      {disabled}
+      onchange={typed}
+      onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); }}
+      onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
+    />
+  {/if}
+  </div>
 </div>
 
 <style>
   .slider { display: flex; flex-direction: column; gap: 8px; width: 100%; }
+  /* Phones: label beside the track, so all sliders fit under the photo. */
+  @media (max-width: 860px) {
+    .slider { flex-direction: row; align-items: center; gap: 12px; }
+    .label { flex: none; width: 76px; }
+    .row { flex: 1; min-width: 0; }
+  }
   .label { color: var(--muted); }
+  .row { display: flex; gap: 8px; }
   .track {
+    flex: 1;
     position: relative;
     height: 28px;
     border: 2px solid var(--c);
     cursor: ew-resize;
-    touch-action: none;
+    touch-action: pan-y;
     user-select: none;
   }
   .fill { position: relative; height: 100%; background: var(--c); }
@@ -83,6 +154,20 @@
     gap: 2px;
   }
   .grip i { display: block; width: 1px; height: 8px; background: var(--bg); }
+  .value {
+    width: 52px;
+    height: 28px;
+    padding: 0;
+    border: 2px solid var(--c);
+    background: transparent;
+    color: var(--ink);
+    font: inherit;
+    font-variant-numeric: tabular-nums;
+    text-align: center;
+    border-radius: 0;
+    appearance: none;
+  }
+  .value:focus { outline: none; background: var(--c); color: var(--bg); }
   .disabled { opacity: 0.3; }
   .disabled .track { cursor: default; }
 </style>
