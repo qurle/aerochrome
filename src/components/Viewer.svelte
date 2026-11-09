@@ -34,7 +34,7 @@
   $effect(() => {
     const img = editor.image;
     const params = editor.params(editor.comparing);
-    void editor.presetId;
+    void editor.lutVersion;
     const { w, h } = fit;
     if (!img || !editor.renderer || editor.busy?.kind === 'export' || editor.busy?.kind === 'copy') return;
     cancelAnimationFrame(raf);

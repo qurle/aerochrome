@@ -9,6 +9,18 @@ export interface RenderParams {
   film: number;
   recipe: FilmRecipe;
   aberration: number;
+  /** Linear R/B split as a fraction of the image width/height. */
+  split: [number, number];
+  /** Rainbow dispersion towards the edges (replaces the R/B split when > 0). */
+  prism: number;
+  /** Iridescent highlight rings and lens ghosts. */
+  flare: number;
+  /** Prism light spots: amount, count (≤ 12), size as a fraction of the frame. */
+  leak: [number, number, number];
+  /** Random layout for the light spots. */
+  seed: number;
+  /** Rainbow tint on contrast edges (0..1). */
+  edge: number;
 }
 
 type GL = WebGL2RenderingContext;
@@ -63,7 +75,7 @@ export class Renderer {
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     this.main = this.program(MAIN_FRAG, ['uSrc', 'uLut', 'uHalo', 'uLutSize', 'uOutRect', 'uSrcRect', 'uSrcTexel',
-      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr']);
+      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed', 'uEdge']);
     this.bright = this.program(BRIGHT_FRAG, ['uSrc']);
     this.blur = this.program(BLUR_FRAG, ['uSrc', 'uDir']);
 
@@ -127,10 +139,16 @@ export class Renderer {
     return { tex, fb, w, h };
   }
 
+  private lutSize = LUT_SIZE;
+  private hasLut = false;
+
   setLut(data: Float32Array) {
     const gl = this.gl;
+    const n = Math.round(Math.cbrt(data.length / 4));
+    this.lutSize = n;
     gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
-    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, LUT_SIZE, LUT_SIZE, LUT_SIZE, 0, gl.RGBA, gl.FLOAT, data);
+    gl.texImage3D(gl.TEXTURE_3D, 0, gl.RGBA16F, n, n, n, 0, gl.RGBA, gl.FLOAT, data);
+    this.hasLut = true;
   }
 
   private upload(src: TexImageSource & { width: number; height: number }) {
@@ -195,19 +213,26 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0);
     const l = this.pass(this.main, target, outW, outH);
     gl.uniform1i(l.uSrc, 0); gl.uniform1i(l.uLut, 1); gl.uniform1i(l.uHalo, 2);
-    gl.uniform1f(l.uLutSize, LUT_SIZE);
+    gl.uniform1f(l.uLutSize, this.lutSize);
     gl.uniform4fv(l.uOutRect, outRect);
     gl.uniform4fv(l.uSrcRect, srcRect);
     gl.uniform2f(l.uSrcTexel, 1 / this.srcSize[0], 1 / this.srcSize[1]);
     gl.uniform2f(l.uImageSize, imageSize[0], imageSize[1]);
     gl.uniform2f(l.uOutSize, outW, outH);
     gl.uniform1f(l.uFlipY, target ? 0 : 1);
-    gl.uniform1f(l.uStrength, p.strength);
+    // Until the first LUT arrives from the worker, show the original.
+    gl.uniform1f(l.uStrength, this.hasLut ? p.strength : 0);
     gl.uniform1f(l.uSharpen, p.sharpen);
     gl.uniform1f(l.uFilm, p.film);
     gl.uniform4f(l.uFilmMix, p.recipe.grain, p.recipe.halation, p.recipe.vignette, p.recipe.soft);
     gl.uniform1f(l.uFade, p.film * p.recipe.fade * 0.06);
     gl.uniform1f(l.uAberr, p.aberration);
+    gl.uniform2f(l.uSplit, p.split[0], p.split[1]);
+    gl.uniform1f(l.uPrism, p.prism);
+    gl.uniform1f(l.uFlare, p.flare);
+    gl.uniform3f(l.uLeak, p.leak[0], p.leak[1], p.leak[2]);
+    gl.uniform1f(l.uSeed, p.seed);
+    gl.uniform1f(l.uEdge, p.edge);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 
@@ -229,7 +254,7 @@ export class Renderer {
   ): Promise<Uint8ClampedArray<ArrayBuffer>> {
     const gl = this.gl;
     const [W, H] = size;
-    const margin = 4 + Math.ceil(p.aberration * 0.25 * Math.max(W, H));
+    const margin = 4 + Math.ceil((Math.max(p.aberration, p.prism) * 0.25 + (p.edge > 0 ? 0.006 : 0) + Math.max(Math.abs(p.split[0]), Math.abs(p.split[1]))) * Math.max(W, H));
     const tile = Math.max(256, Math.min(2048, this.maxTexture - 2 * margin));
     const out = new Uint8ClampedArray(W * H * 4);
     const target = this.target(tile, tile);

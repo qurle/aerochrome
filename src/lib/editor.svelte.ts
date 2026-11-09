@@ -1,12 +1,14 @@
-import { buildLut } from './color/lut';
+import { LutCache } from './color/luts';
 import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
-import { ALL_PRESETS, findPreset } from './presets';
+import { ALL_PRESETS, findPreset, type Preset } from './presets';
 
 export const DEFAULTS = { strength: 1, sharpen: 0, film: 0.12 };
 const THUMB_PX = 128;
+/** Thumbnails use a coarser LUT: 8× cheaper to bake, invisible at 64 px. */
+const THUMB_LUT = 17;
 const COPY_MAX = 4096;
 const JPEG_QUALITY = 96;
 
@@ -17,6 +19,8 @@ class Editor {
   sharpen = $state(DEFAULTS.sharpen);
   film = $state(DEFAULTS.film);
   comparing = $state(false);
+  /** Layout of random effects (prism light spots); new per photo, re-rolled by tapping the selected preset. */
+  seed = $state(Math.random() * 100);
   busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number }>(null);
   error = $state<string | null>(null);
   thumbs = $state.raw<Record<string, ImageBitmap>>({});
@@ -24,7 +28,8 @@ class Editor {
   pending = $state<File | null>(null);
   renderer: Renderer | null = null;
 
-  private luts = new Map<string, Float32Array>();
+  private luts = new LutCache();
+  private selectJob = 0;
   private thumbRenderer: Renderer | null = null;
   private thumbJob = 0;
 
@@ -32,32 +37,38 @@ class Editor {
 
   params(original = false): RenderParams {
     const p = this.preset;
-    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0 };
-    return { strength: this.strength, sharpen: this.sharpen, film: this.film, recipe: p.film, aberration: p.aberration ?? 0 };
+    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0 };
+    const fx = spatial(p), k = this.strength;
+    return {
+      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: this.seed,
+      aberration: fx.aberration * k, split: [fx.split[0] * k, fx.split[1] * k], prism: fx.prism * k,
+      flare: fx.flare * k, leak: [fx.leak[0] * k, fx.leak[1], fx.leak[2]], edge: fx.edge * k,
+    };
   }
 
   attach(canvas: HTMLCanvasElement) {
     try {
       this.renderer = new Renderer(canvas);
       if (this.image) this.renderer.setSource(this.image.preview);
-      this.renderer.setLut(this.lut(this.presetId));
+      void this.select(this.presetId);
     } catch (e) {
       this.error = (e as Error).message;
     }
   }
 
-  lut(id: string) {
-    let l = this.luts.get(id);
-    if (!l) {
-      l = buildLut(findPreset(id).look, this.renderer?.space ?? 'srgb');
-      this.luts.set(id, l);
-    }
-    return l;
-  }
+  /** Version counter so the viewer re-renders once a LUT lands. */
+  lutVersion = $state(0);
 
-  select(id: string) {
+  async select(id: string) {
+    if (id === this.presetId && (findPreset(id).leak || findPreset(id).edge)) this.seed = Math.random() * 100;
     this.presetId = id;
-    this.renderer?.setLut(this.lut(id));
+    const r = this.renderer;
+    if (!r) return;
+    const job = ++this.selectJob;
+    const lut = await this.luts.get(id, r.space);
+    if (job !== this.selectJob) return;
+    r.setLut(lut);
+    this.lutVersion++;
   }
 
   async open(file: File) {
@@ -67,6 +78,7 @@ class Editor {
       const img = await loadImage(file);
       this.image?.preview.close();
       this.image = img;
+      this.seed = Math.random() * 100;
       this.renderer?.setSource(img.preview);
       void this.buildThumbs();
     } catch (e) {
@@ -93,15 +105,16 @@ class Editor {
     for (const id of order) {
       if (job !== this.thumbJob) break;
       const preset = findPreset(id);
-      if (!this.luts.has(id)) await new Promise((res) => setTimeout(res, 0));
-      r.setLut(this.luts.get(id) ?? this.lut(id));
-      r.render({ strength: 1, sharpen: 0, film: 0.1, recipe: preset.film, aberration: preset.aberration ?? 0 },
-        [side, side]);
+      r.setLut(await this.luts.get(id, r.space, THUMB_LUT));
+      if (job !== this.thumbJob) break;
+      r.render({ strength: 1, sharpen: 0, film: 0.1, ...spatial(preset), seed: 7 }, [side, side]);
       const bmp = await createImageBitmap(r.canvas as HTMLCanvasElement);
       this.thumbs[id]?.close();
       this.thumbs = { ...this.thumbs, [id]: bmp };
     }
     crop.close();
+    // Warm the full-size LUTs in the background so switching presets is instant.
+    if (job === this.thumbJob) for (const p of ALL_PRESETS) void this.luts.get(p.id, this.renderer?.space ?? r.space, undefined, false);
   }
 
   /** Full pipeline at (up to) `maxSide`, returns RGBA pixels in the working space. */
@@ -177,6 +190,19 @@ class Editor {
       .then(() => { this.busy = { kind: 'copied' }; setTimeout(() => (this.busy = null), 1200); })
       .catch((e) => { this.busy = null; this.error = `Copy failed: ${(e as Error).message}`; });
   }
+}
+
+/** Per-preset shader effects (scaled by Strength in `params`). */
+function spatial(p: Preset) {
+  return {
+    recipe: p.film,
+    aberration: p.aberration ?? 0,
+    split: p.split ?? [0, 0],
+    prism: p.prism ?? 0,
+    flare: p.flare ?? 0,
+    leak: p.leak ?? [0, 0, 0],
+    edge: p.edge ?? 0,
+  } satisfies Partial<RenderParams>;
 }
 
 function download(file: File) {

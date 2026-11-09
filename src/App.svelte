@@ -87,20 +87,16 @@
         <div class="scroll">
           {#each GROUPS as group (group.id)}
             <div class="group">
-              <span class="label">{group.name}{#if group.soon}<span class="soon">soon</span>{/if}</span>
+              <span class="label">{group.name}</span>
               <div class="previews">
-                {#if group.soon}
-                  {#each { length: 4 } as _, i (i)}<Thumb label="{group.name} (coming soon)" disabled />{/each}
-                {:else}
-                  {#each group.presets as p (p.id)}
-                    <Thumb
-                      label="{group.name} {p.name}"
-                      bitmap={editor.thumbs[p.id]}
-                      selected={editor.presetId === p.id}
-                      onclick={() => editor.select(p.id)}
-                    />
-                  {/each}
-                {/if}
+                {#each group.presets as p (p.id)}
+                  <Thumb
+                    label="{group.name} {p.name}"
+                    bitmap={editor.thumbs[p.id]}
+                    selected={editor.presetId === p.id}
+                    onclick={() => editor.select(p.id)}
+                  />
+                {/each}
               </div>
             </div>
           {/each}
@@ -169,7 +165,6 @@
   .scroll::-webkit-scrollbar { display: none; }
   .group { display: flex; flex-direction: column; gap: 8px; }
   .label { color: var(--muted); }
-  .soon { margin-left: 8px; font-size: 13px; }
   .previews { display: flex; gap: 8px; }
   .sliders { display: flex; flex-direction: column; gap: 16px; flex: none; }
 
