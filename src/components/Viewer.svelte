@@ -29,17 +29,55 @@
     return () => ro.disconnect();
   });
 
-  // Tap opens fullscreen; a horizontal swipe steps to the next/previous preset.
+  // Tap opens fullscreen. A horizontal drag slides the photo with the finger;
+  // past a threshold (or on a flick) it slides out and the next preset slides in.
+  // All CSS transforms on the rendered canvas; one WebGL render per switch.
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  const EASE = 'cubic-bezier(0.2, 0.85, 0.25, 1)';
+  let slide = $state({ x: 0, op: 1, tr: 'none' });
   let start: { x: number; y: number; t: number } | null = null;
+  let swiping = false;
+  let samples: { t: number; x: number }[] = [];
+
   function down(e: PointerEvent) {
+    if (!editor.image) return;
+    canvas.setPointerCapture(e.pointerId);
     start = { x: e.clientX, y: e.clientY, t: performance.now() };
+    swiping = false;
+    samples = [{ t: start.t, x: e.clientX }];
   }
-  function up(e: PointerEvent) {
+  function move(e: PointerEvent) {
     if (!start) return;
-    const dx = e.clientX - start.x, dy = e.clientY - start.y, dt = performance.now() - start.t;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
+    if (!swiping && Math.abs(dx) > 8 && Math.abs(dx) > Math.abs(dy)) swiping = true;
+    if (!swiping) return;
+    samples.push({ t: performance.now(), x: e.clientX });
+    while (samples.length > 2 && samples[samples.length - 1].t - samples[0].t > 100) samples.shift();
+    slide = { x: dx, op: 1 - Math.min(0.5, Math.abs(dx) / fit.w), tr: 'none' };
+  }
+  async function up(e: PointerEvent) {
+    if (!start) return;
+    const dx = e.clientX - start.x, dy = e.clientY - start.y;
     start = null;
-    if (Math.abs(dx) > 40 && Math.abs(dx) > Math.abs(dy) * 1.5 && dt < 700) editor.step(dx < 0 ? 1 : -1);
-    else if (Math.hypot(dx, dy) < 8) editor.openFullscreen();
+    if (!swiping) {
+      if (Math.hypot(dx, dy) < 8) editor.openFullscreen();
+      return;
+    }
+    swiping = false;
+    const a = samples[0], b = samples[samples.length - 1];
+    const v = b.t > a.t ? (b.x - a.x) / (b.t - a.t) : 0;
+    const dir = Math.abs(v) > 0.5 ? Math.sign(v) : Math.abs(dx) > fit.w * 0.25 ? Math.sign(dx) : 0;
+    if (!dir) { await go({ x: 0, op: 1 }, 220); return; }
+    await go({ x: dir * fit.w * 0.6, op: 0 }, 140);
+    editor.step(dir < 0 ? 1 : -1);
+    slide = { x: -dir * fit.w * 0.25, op: 0, tr: 'none' };
+    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
+    await go({ x: 0, op: 1 }, 240);
+  }
+  function go(to: { x: number; op: number }, ms: number) {
+    ms = reduced() ? 0 : ms;
+    slide = { ...to, tr: ms ? `transform ${ms}ms ${EASE}, opacity ${ms}ms ${EASE}` : 'none' };
+    return new Promise((r) => setTimeout(r, ms));
   }
 
   // Re-render whenever anything visible changes, at most once per frame.
@@ -49,6 +87,8 @@
     const params = editor.params(editor.comparing);
     void editor.lutVersion;
     const { w, h } = fit;
+    // While a gesture resizes the layout, the browser just scales the last frame.
+    if (editor.gesturing) return;
     if (!img || !editor.renderer || editor.busy?.kind === 'export' || editor.busy?.kind === 'copy') return;
     cancelAnimationFrame(raf);
     raf = requestAnimationFrame(() => {
@@ -72,9 +112,14 @@
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         title="Open fullscreen (F) · swipe to change preset"
+        style:transform="translateX({slide.x}px)"
+        style:opacity={slide.op}
+        style:transition={slide.tr}
+        style:visibility={editor.fullscreen ? 'hidden' : 'visible'}
         onpointerdown={down}
+        onpointermove={move}
         onpointerup={up}
-        onpointercancel={() => (start = null)}
+        onpointercancel={() => { start = null; if (swiping) { swiping = false; void go({ x: 0, op: 1 }, 220); } }}
         oncontextmenu={(e) => e.preventDefault()}
       ></canvas>
       {#if !editor.image}

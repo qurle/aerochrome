@@ -15,6 +15,12 @@
   let collapsed = $state(false);
   const group = $derived(groupOf(editor.presetId));
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
+  $effect(() => {
+    const mq = matchMedia('(max-width: 860px)');
+    const on = () => (mobile = mq.matches);
+    mq.addEventListener('change', on);
+    return () => mq.removeEventListener('change', on);
+  });
   const mod = isMac ? '⌘' : 'Ctrl+';
 
   const open = () => input.click();
@@ -59,19 +65,67 @@
     e.preventDefault();
   }
 
-  // Drawer handle: drag down to collapse, up to expand; tap toggles.
-  let handleStart: { y: number; t: number } | null = null;
+  // --- Presets pane (mobile): follows the finger, settles with momentum.
+  // Progress p: 0 = open, 1 = collapsed. The stage height is driven from here;
+  // while it moves, the photo is only CSS-scaled (editor.gesturing) and
+  // re-rendered once when the pane settles.
+  let mainH = $state(window.innerHeight);
+  let mobile = $state(matchMedia('(max-width: 860px)').matches);
+  let paneP = $state(0);
+  let paneTr = $state('none');
+  // env() can't be read from JS directly; measure it with a probe element.
+  const sab = (() => {
+    const el = document.createElement('div');
+    el.style.cssText = 'position:fixed;visibility:hidden;padding-bottom:env(safe-area-inset-bottom,0px)';
+    document.body.append(el);
+    const v = parseFloat(getComputedStyle(el).paddingBottom) || 0;
+    el.remove();
+    return v;
+  })();
+  const safeBottom = () => sab;
+  const openH = $derived(Math.min(mainH * 0.58, 620));
+  const closedH = $derived(mainH - 64 - safeBottom());
+  const stageH = $derived(openH + (closedH - openH) * paneP);
+
+  let drag: { y: number; p0: number; samples: { t: number; y: number }[] } | null = null;
   function handleDown(e: PointerEvent) {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
-    handleStart = { y: e.clientY, t: performance.now() };
+    drag = { y: e.clientY, p0: paneP, samples: [{ t: performance.now(), y: e.clientY }] };
+    paneTr = 'none';
+    editor.gesturing = true;
+  }
+  function handleMove(e: PointerEvent) {
+    if (!drag) return;
+    const span = closedH - openH;
+    let p = drag.p0 + (e.clientY - drag.y) / span;
+    // Rubber-band slightly past either end.
+    if (p < 0) p = -0.15 * (1 - 1 / (1 + -p * 2));
+    if (p > 1) p = 1 + 0.15 * (1 - 1 / (1 + (p - 1) * 2));
+    paneP = p;
+    drag.samples.push({ t: performance.now(), y: e.clientY });
+    while (drag.samples.length > 2 && drag.samples[drag.samples.length - 1].t - drag.samples[0].t > 100) drag.samples.shift();
   }
   function handleUp(e: PointerEvent) {
-    if (!handleStart) return;
-    const dy = e.clientY - handleStart.y;
-    if (dy > 30) collapsed = true;
-    else if (dy < -30) collapsed = false;
-    else if (Math.abs(dy) < 8) collapsed = !collapsed;
-    handleStart = null;
+    if (!drag) return;
+    const dy = e.clientY - drag.y;
+    const a = drag.samples[0], b = drag.samples[drag.samples.length - 1];
+    const v = b.t > a.t ? (b.y - a.y) / (b.t - a.t) : 0; // px per ms, + = down
+    const tap = Math.abs(dy) < 6;
+    drag = null;
+    const target = tap ? (paneP < 0.5 ? 1 : 0) : Math.abs(v) > 0.4 ? (v > 0 ? 1 : 0) : paneP > 0.5 ? 1 : 0;
+    settle(target, v);
+  }
+  function settle(target: 0 | 1, v = 0) {
+    const dist = Math.abs(target - paneP) * (closedH - openH);
+    const ms = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0
+      : Math.round(Math.min(340, Math.max(170, dist / Math.max(Math.abs(v), 1.1))));
+    paneTr = ms ? `height ${ms}ms cubic-bezier(0.2, 0.85, 0.25, 1)` : 'none';
+    paneP = target;
+    setTimeout(() => {
+      collapsed = target === 1;
+      paneTr = 'none';
+      editor.gesturing = false;
+    }, ms + 30);
   }
   function scrolled() {
     page = Math.round(pager.scrollLeft / (pager.scrollWidth - pager.clientWidth || 1));
@@ -99,15 +153,24 @@
   ondragover={(e) => { e.preventDefault(); dragging = true; }}
   ondragleave={(e) => { if (!e.relatedTarget) dragging = false; }}
   ondrop={drop}
-  onpopstate={() => (editor.fullscreen = false)}
+  onpopstate={() => editor.onPopState()}
 />
 
 {#if editor.fullscreen && editor.image}<Fullscreen />{/if}
 
 <input bind:this={input} type="file" accept="image/*,.heic,.heif" hidden onchange={picked} />
 
-<main class:dragging class:collapsed>
-  <section class="stage">
+<main
+  class:dragging
+  class:collapsed
+  bind:clientHeight={mainH}
+  style:--p={Math.min(1, Math.max(0, paneP))}
+>
+  <section
+    class="stage"
+    style:height={mobile ? `${stageH}px` : null}
+    style:transition={mobile ? paneTr : null}
+  >
     <Viewer onopen={open}>
       {#snippet top()}
         <div class="desktop"><Button title="Open (O)" onclick={open}>Open</Button></div>
@@ -132,11 +195,12 @@
       aria-label={collapsed ? 'Show presets' : 'Hide presets'}
       aria-expanded={!collapsed}
       onpointerdown={handleDown}
+      onpointermove={handleMove}
       onpointerup={handleUp}
-      onpointercancel={() => (handleStart = null)}
+      onpointercancel={handleUp}
     >
       <i></i>
-      {#if collapsed}<span class="current"><span class="label">{group.name}</span> {editor.preset.name}</span>{/if}
+      <span class="current"><span class="label">{group.name}</span> {editor.preset.name}</span>
     </button>
     <div class="pager" bind:this={pager} onscroll={scrolled}>
       <div class="page presets">
@@ -247,19 +311,29 @@
     .mobile { display: flex; }
     .stage {
       flex: none;
-      height: min(58svh, 620px);
       padding: max(24px, env(safe-area-inset-top)) 16px 24px;
-      transition: height 0.3s cubic-bezier(0.3, 0.7, 0.2, 1);
     }
-    main.collapsed .stage { height: calc(100svh - 64px - env(safe-area-inset-bottom)); }
     main.collapsed .pager, main.collapsed .dots { display: none; }
+    .pager, .dots { opacity: clamp(0, calc(1 - var(--p) * 1.8), 1); }
+    .handle .current {
+      position: absolute;
+      top: 28px;
+      left: 0;
+      right: 0;
+      text-align: center;
+      pointer-events: none;
+      opacity: clamp(0, calc((var(--p) - 0.45) * 2.5), 1);
+    }
     .handle {
       display: flex;
       flex-direction: column;
       align-items: center;
       gap: 10px;
+      position: relative;
       width: 100%;
-      padding: 0 16px 16px;
+      height: 34px;
+      margin-top: -10px;
+      padding: 10px 16px 0;
       border: 0;
       background: transparent;
       touch-action: none;

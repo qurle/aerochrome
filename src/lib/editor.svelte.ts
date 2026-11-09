@@ -79,10 +79,26 @@ class Editor {
     history.pushState({ aerochromeFullscreen: true }, '');
   }
 
+  /** Set while fullscreen plays its closing animation (the viewer then calls finishCloseFullscreen). */
+  fsClosing = $state(false);
+  /** A user gesture is resizing the layout: skip WebGL renders until it settles. */
+  gesturing = $state(false);
+
+  /** Ask fullscreen to close; it animates out first. */
   closeFullscreen() {
-    if (!this.fullscreen) return;
-    if (history.state?.aerochromeFullscreen) history.back(); // popstate sets fullscreen = false
-    else this.fullscreen = false;
+    if (this.fullscreen) this.fsClosing = true;
+  }
+
+  /** Called by the viewer when its closing animation is done. */
+  finishCloseFullscreen() {
+    this.fsClosing = false;
+    this.fullscreen = false;
+    if (history.state?.aerochromeFullscreen) history.back();
+  }
+
+  /** Browser Back: the history entry is already gone, just animate out. */
+  onPopState() {
+    if (this.fullscreen) this.fsClosing = true;
   }
 
   /** Version counter so the viewer re-renders once a LUT lands. */

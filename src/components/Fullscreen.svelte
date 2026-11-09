@@ -44,11 +44,68 @@
     s = next;
     clampView();
   }
-  /** Toggle between fit and 100% (one image pixel per device pixel) around a point. */
+  /** Toggle between fit and 100% (one image pixel per device pixel) around a point, animated. */
   function toggleZoom(cx = vw / 2, cy = vh / 2) {
+    const from = { s, x, y };
     if (atFit) zoomTo(Math.min(maxScale(), Math.max(1 / dpr(), fitScale() * 2)), cx, cy);
     else fit();
+    tweenView(from, { s, x, y });
   }
+
+  // Animate the view transform. Frames render from the preview (fast path);
+  // the sharp full-resolution pass runs once at the end.
+  let tween = 0;
+  function tweenView(from: { s: number; x: number; y: number }, to: { s: number; x: number; y: number }, ms = 260) {
+    cancelAnimationFrame(tween);
+    if (reduced()) return;
+    const t0 = performance.now();
+    interacting = true;
+    const step = (now: number) => {
+      const k = Math.min(1, (now - t0) / ms), e = 1 - Math.pow(1 - k, 3);
+      s = from.s + (to.s - from.s) * e;
+      x = from.x + (to.x - from.x) * e;
+      y = from.y + (to.y - from.y) * e;
+      if (k < 1) tween = requestAnimationFrame(step);
+      else { interacting = false; scheduleDetail(); }
+    };
+    tween = requestAnimationFrame(step);
+  }
+
+  // --- Motion layer: CSS transforms on the already-rendered canvas, so open,
+  // close and swipe-to-dismiss cost no WebGL work.
+  const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
+  let m = $state({ tx: 0, ty: 0, scale: 1, op: 1, bg: 0, chrome: 0 });
+  let transition = $state('none');
+  const EASE = 'cubic-bezier(0.2, 0.85, 0.25, 1)';
+
+  function animate(to: Partial<typeof m>, ms: number) {
+    ms = reduced() ? 0 : ms;
+    transition = ms ? `transform ${ms}ms ${EASE}, opacity ${ms}ms ${EASE}` : 'none';
+    m = { ...m, ...to };
+    return new Promise<void>((r) => setTimeout(r, ms + 20));
+  }
+
+  /** Transform that places the fitted photo over the main view's photo. */
+  function fromMain() {
+    const main = document.querySelector<HTMLCanvasElement>('section canvas');
+    if (!main) return null;
+    const r = main.getBoundingClientRect();
+    if (!r.width) return null;
+    const fw = W * s, fh = H * s;
+    return { tx: r.left + r.width / 2 - (x + fw / 2), ty: r.top + r.height / 2 - (y + fh / 2), scale: r.width / fw };
+  }
+
+  let closing = false;
+  async function close(dir = 0) {
+    if (closing) return;
+    closing = true;
+    const target = atFit && !dir ? fromMain() : null;
+    if (dir) await animate({ ty: dir * vh, scale: 0.9, bg: 0, chrome: 0 }, 220);
+    else if (target) await animate({ ...target, bg: 0, chrome: 0 }, 280);
+    else await animate({ scale: 0.94, op: 0, bg: 0, chrome: 0 }, 200);
+    editor.finishCloseFullscreen();
+  }
+  $effect(() => { if (editor.fsClosing) void close(); });
 
   // --- Rendering: fast pass from the preview while moving, sharp full-res crop when idle.
   let raf = 0;
@@ -129,6 +186,9 @@
   let pinch: { dist: number; scale: number; mx: number; my: number } | null = null;
   let lastTap = { t: 0, x: 0, y: 0 };
   let down = { t: 0, x: 0, y: 0, moved: false };
+  /** Swipe-to-dismiss: vertical drag at fit. */
+  let dismissing = false;
+  let samples: { t: number; y: number }[] = [];
 
   const local = (e: { clientX: number; clientY: number }) => {
     const r = stage.getBoundingClientRect();
@@ -143,6 +203,7 @@
     interacting = true;
     if (pointers.size === 1) down = { t: performance.now(), x: p.x, y: p.y, moved: false };
     if (pointers.size === 2) {
+      if (dismissing) { dismissing = false; void animate({ ty: 0, scale: 1, bg: 1, chrome: 1 }, 200); }
       const [a, b] = [...pointers.values()];
       pinch = { dist: Math.hypot(a.x - b.x, a.y - b.y), scale: s, mx: (a.x + b.x) / 2, my: (a.y + b.y) / 2 };
     }
@@ -154,6 +215,16 @@
     const p = local(e);
     pointers.set(e.pointerId, p);
     if (Math.hypot(p.x - down.x, p.y - down.y) > 6) down.moved = true;
+    if (pointers.size === 1 && (dismissing || (atFit && Math.abs(p.y - down.y) > 8 && Math.abs(p.y - down.y) > Math.abs(p.x - down.x)))) {
+      // Follow the finger; shrink and fade the further it goes.
+      dismissing = true;
+      const dy = p.y - down.y, k = Math.min(1, Math.abs(dy) / (vh * 0.5));
+      samples.push({ t: performance.now(), y: p.y });
+      while (samples.length > 2 && samples[samples.length - 1].t - samples[0].t > 100) samples.shift();
+      transition = 'none';
+      m = { ...m, tx: (p.x - down.x) * 0.3, ty: dy, scale: 1 - k * 0.15, bg: 1 - k, chrome: 1 - Math.min(1, k * 2) };
+      return;
+    }
     if (pointers.size === 1) {
       x += p.x - prev.x;
       y += p.y - prev.y;
@@ -173,10 +244,22 @@
     const p = local(e);
     pointers.delete(e.pointerId);
     if (pointers.size < 2) pinch = null;
+    if (pointers.size === 0 && dismissing) {
+      dismissing = false;
+      interacting = false;
+      const a = samples[0], b = samples[samples.length - 1];
+      const v = a && b && b.t > a.t ? (b.y - a.y) / (b.t - a.t) : 0; // px per ms
+      samples = [];
+      const dy = p.y - down.y;
+      if (Math.abs(dy) > vh * 0.18 || Math.abs(v) > 0.6) void close(Math.sign(Math.abs(v) > 0.6 ? v : dy) || 1);
+      else void animate({ tx: 0, ty: 0, scale: 1, bg: 1, chrome: 1 }, 240);
+      return;
+    }
     if (pointers.size === 0) {
       interacting = false;
       const now = performance.now();
       if (!down.moved && now - down.t < 300) {
+        samples = [];
         if (now - lastTap.t < 320 && Math.hypot(p.x - lastTap.x, p.y - lastTap.y) < 30) {
           toggleZoom(p.x, p.y);
           lastTap = { t: 0, x: 0, y: 0 };
@@ -204,7 +287,7 @@
     if (e.key === 'Escape') editor.closeFullscreen();
     else if (e.key === '+' || e.key === '=') zoomTo(s * 1.5, vw / 2, vh / 2);
     else if (e.key === '-') zoomTo(s / 1.5, vw / 2, vh / 2);
-    else if (e.key === '0') fit();
+    else if (e.key === '0') { const from = { s, x, y }; fit(); tweenView(from, { s, x, y }); }
     else if (e.key === '1') zoomTo(1 / dpr(), vw / 2, vh / 2);
     else return;
     e.preventDefault();
@@ -223,6 +306,10 @@
       return;
     }
     fit();
+    // Open: start over the main view's photo and grow into place.
+    const start = fromMain();
+    m = { ...(start ?? { tx: 0, ty: 0, scale: 0.94 }), op: start ? 1 : 0, bg: 0, chrome: 0 };
+    requestAnimationFrame(() => requestAnimationFrame(() => void animate({ tx: 0, ty: 0, scale: 1, op: 1, bg: 1, chrome: 1 }, 300)));
     const ro = new ResizeObserver(() => {
       const wasFit = atFit;
       vw = stage.clientWidth; vh = stage.clientHeight;
@@ -244,6 +331,7 @@
       document.body.style.overflow = '';
       clearTimeout(detailTimer);
       cancelAnimationFrame(raf);
+      cancelAnimationFrame(tween);
       full?.close();
       renderer?.dispose();
       editor.comparing = false;
@@ -260,13 +348,21 @@
   aria-label="Fullscreen view"
   tabindex="-1"
   bind:this={stage}
+  style:--bg-a={m.bg}
+  style:--chrome={m.chrome}
+  style:--fade={transition === 'none' ? 'none' : transition.replace('transform', 'background-color')}
   onpointerdown={pointerdown}
   onpointermove={pointermove}
   onpointerup={pointerup}
   onpointercancel={pointerup}
   onwheel={wheel}
 >
-  <canvas bind:this={canvas}></canvas>
+  <canvas
+    bind:this={canvas}
+    style:transform="translate({m.tx}px, {m.ty}px) scale({m.scale})"
+    style:opacity={m.op}
+    style:transition={transition}
+  ></canvas>
 
   <div class="top">
     <Button size="sm" onclick={() => editor.closeFullscreen()}>Close</Button>
@@ -283,7 +379,8 @@
     position: fixed;
     inset: 0;
     z-index: 10;
-    background: var(--bg);
+    background: rgb(246 246 246 / var(--bg-a));
+    transition: var(--fade);
     overflow: hidden;
     touch-action: none;
     user-select: none;
@@ -292,7 +389,8 @@
     outline: none;
   }
   .fullscreen:active { cursor: grabbing; }
-  canvas { position: absolute; display: block; }
+  canvas { position: absolute; display: block; will-change: transform; }
+  .top, .bottom { opacity: var(--chrome); transition: var(--fade); }
   .top, .bottom {
     position: absolute;
     display: flex;
