@@ -33,7 +33,8 @@ uniform float uAberr;
 uniform vec2 uSplit;    // linear R/B offset in full-image uv (B gets the opposite)
 uniform float uPrism;   // spectral dispersion: 9 rainbow-tinted samples instead of an R/B split
 uniform float uFlare;   // iridescent glow rings around highlights plus mirrored lens ghosts
-uniform vec3 uLeak;     // prism light leak: amount, angle (radians), offset across the frame
+uniform vec3 uLeak;     // prism light spots: amount, count, size
+uniform float uSeed;    // layout of the light spots
 
 vec2 srcUv(vec2 u) { return (u - uSrcRect.xy) / (uSrcRect.zw - uSrcRect.xy); }
 
@@ -111,19 +112,28 @@ void main() {
   }
 
   if (uLeak.x > 0.0) {
-    // A dispersed light streak: the spectrum spreads across the band, fading along it.
-    vec2 dir = vec2(cos(uLeak.y), sin(uLeak.y));
-    float along = dot(d, dir);
-    float across = dot(d, vec2(-dir.y, dir.x)) - uLeak.z;
-    float width = 0.09;
-    float band = exp(-across * across / (width * width));
-    float fade = exp(-along * along / 0.12);
-    vec3 light = spectrum(clamp(across / width * 0.45 + 0.5, 0.0, 1.0));
-    col = screen(col, light * band * fade * uLeak.x);
-    // A second, fainter echo, like a reflection inside the glass.
-    float across2 = across + 0.22;
-    float band2 = exp(-across2 * across2 / (width * width * 0.5));
-    col = screen(col, spectrum(clamp(across2 / width * 0.6 + 0.5, 0.0, 1.0)) * band2 * fade * uLeak.x * 0.35);
+    // Scattered prism light: small dispersed flecks, each a short bar with the
+    // spectrum running across it. Placement is relative to the frame, so the
+    // preview and the export match; uSeed reshuffles the layout.
+    for (int i = 0; i < 12; i++) {
+      if (float(i) >= uLeak.y) break;
+      vec2 r1 = vec2(hash(vec2(uSeed, float(i) * 1.7)), hash(vec2(float(i) * 3.1, uSeed + 0.37)));
+      vec2 r2 = vec2(hash(vec2(uSeed + 2.9, float(i) * 5.3)), hash(vec2(float(i) * 0.7 + 9.1, uSeed)));
+      vec2 centre = r1 * 0.46 * aspect;
+      float angle = r2.x * 3.14159;
+      float len = uLeak.z * (0.55 + 0.45 * r2.y);
+      float width = len * (0.28 + 0.14 * r1.x * r1.x);
+      vec2 dir = vec2(cos(angle), sin(angle));
+      vec2 q = d - centre;
+      float along = dot(q, dir) / len;
+      float across = dot(q, vec2(-dir.y, dir.x)) / width;
+      // Flat-topped across the bar so every band of the spectrum is visible.
+      float a2 = across * across;
+      float shape = exp(-along * along * 2.2) * exp(-a2 * a2 * 0.9);
+      float strength = 0.55 + 0.45 * abs(r2.x * 2.0 - r1.y);
+      vec3 light = spectrum(clamp(across * 0.42 + 0.5, 0.0, 1.0));
+      col = screen(col, light * shape * strength * uLeak.x);
+    }
   }
 
   if (uFilm > 0.0) {

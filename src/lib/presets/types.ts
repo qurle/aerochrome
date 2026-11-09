@@ -22,7 +22,7 @@ export interface Preset {
   prism?: number;
   /** Iridescent rainbow rings around highlights plus mirrored lens ghosts (0..1). */
   flare?: number;
-  /** Prism light leak: [amount 0..1, angle in degrees, offset across the frame -0.5..0.5]. */
+  /** Scattered prism light spots: [amount 0..1, count up to 12, size as a fraction of the frame ~0.05–0.2]. Layout is random per photo. */
   leak?: [number, number, number];
 }
 

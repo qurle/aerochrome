@@ -15,8 +15,10 @@ export interface RenderParams {
   prism: number;
   /** Iridescent highlight rings and lens ghosts. */
   flare: number;
-  /** Prism light leak: amount, angle in degrees, offset across the frame. */
+  /** Prism light spots: amount, count (≤ 12), size as a fraction of the frame. */
   leak: [number, number, number];
+  /** Random layout for the light spots. */
+  seed: number;
 }
 
 type GL = WebGL2RenderingContext;
@@ -71,7 +73,7 @@ export class Renderer {
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     this.main = this.program(MAIN_FRAG, ['uSrc', 'uLut', 'uHalo', 'uLutSize', 'uOutRect', 'uSrcRect', 'uSrcTexel',
-      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak']);
+      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed']);
     this.bright = this.program(BRIGHT_FRAG, ['uSrc']);
     this.blur = this.program(BLUR_FRAG, ['uSrc', 'uDir']);
 
@@ -226,7 +228,8 @@ export class Renderer {
     gl.uniform2f(l.uSplit, p.split[0], p.split[1]);
     gl.uniform1f(l.uPrism, p.prism);
     gl.uniform1f(l.uFlare, p.flare);
-    gl.uniform3f(l.uLeak, p.leak[0], (p.leak[1] * Math.PI) / 180, p.leak[2]);
+    gl.uniform3f(l.uLeak, p.leak[0], p.leak[1], p.leak[2]);
+    gl.uniform1f(l.uSeed, p.seed);
     gl.drawArrays(gl.TRIANGLES, 0, 3);
   }
 

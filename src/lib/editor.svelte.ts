@@ -19,6 +19,8 @@ class Editor {
   sharpen = $state(DEFAULTS.sharpen);
   film = $state(DEFAULTS.film);
   comparing = $state(false);
+  /** Layout of random effects (prism light spots); new per photo, re-rolled by tapping the selected preset. */
+  seed = $state(Math.random() * 100);
   busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number }>(null);
   error = $state<string | null>(null);
   thumbs = $state.raw<Record<string, ImageBitmap>>({});
@@ -35,10 +37,10 @@ class Editor {
 
   params(original = false): RenderParams {
     const p = this.preset;
-    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0] };
+    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0 };
     const fx = spatial(p), k = this.strength;
     return {
-      strength: k, sharpen: this.sharpen, film: this.film, ...fx,
+      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: this.seed,
       aberration: fx.aberration * k, split: [fx.split[0] * k, fx.split[1] * k], prism: fx.prism * k,
       flare: fx.flare * k, leak: [fx.leak[0] * k, fx.leak[1], fx.leak[2]],
     };
@@ -58,6 +60,7 @@ class Editor {
   lutVersion = $state(0);
 
   async select(id: string) {
+    if (id === this.presetId && findPreset(id).leak) this.seed = Math.random() * 100;
     this.presetId = id;
     const r = this.renderer;
     if (!r) return;
@@ -75,6 +78,7 @@ class Editor {
       const img = await loadImage(file);
       this.image?.preview.close();
       this.image = img;
+      this.seed = Math.random() * 100;
       this.renderer?.setSource(img.preview);
       void this.buildThumbs();
     } catch (e) {
@@ -103,7 +107,7 @@ class Editor {
       const preset = findPreset(id);
       r.setLut(await this.luts.get(id, r.space, THUMB_LUT));
       if (job !== this.thumbJob) break;
-      r.render({ strength: 1, sharpen: 0, film: 0.1, ...spatial(preset) }, [side, side]);
+      r.render({ strength: 1, sharpen: 0, film: 0.1, ...spatial(preset), seed: 7 }, [side, side]);
       const bmp = await createImageBitmap(r.canvas as HTMLCanvasElement);
       this.thumbs[id]?.close();
       this.thumbs = { ...this.thumbs, [id]: bmp };
