@@ -13,8 +13,7 @@
   let page = $state(0);
   /** Preset list scrolled away from the top: show the top fade. */
   let listScrolled = $state(false);
-  /** Mobile: presets pane dragged down, photo takes the screen. */
-  let collapsed = $state(false);
+
   const group = $derived(groupOf(editor.presetId));
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
   $effect(() => {
@@ -89,9 +88,17 @@
   const closedH = $derived(mainH - 64 - safeBottom());
   const stageH = $derived(openH + (closedH - openH) * paneP);
 
-  let drag: { y: number; p0: number; samples: { t: number; y: number }[] } | null = null;
+  let drag = $state.raw<{ y: number; p0: number; samples: { t: number; y: number }[] } | null>(null);
+  let settling = $state(false);
+  let settleTimer = 0;
+  let settleToken = 0;
+  /** Collapsed is derived from the pane's actual position, so it can never disagree with it. */
+  const collapsed = $derived(paneP >= 1 && !drag && !settling);
   function handleDown(e: PointerEvent) {
     (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+    clearTimeout(settleTimer);
+    settleToken++;
+    settling = false;
     drag = { y: e.clientY, p0: paneP, samples: [{ t: performance.now(), y: e.clientY }] };
     paneTr = 'none';
     editor.gesturing = true;
@@ -104,8 +111,9 @@
     if (p < 0) p = -0.15 * (1 - 1 / (1 + -p * 2));
     if (p > 1) p = 1 + 0.15 * (1 - 1 / (1 + (p - 1) * 2));
     paneP = p;
-    drag.samples.push({ t: performance.now(), y: e.clientY });
-    while (drag.samples.length > 2 && drag.samples[drag.samples.length - 1].t - drag.samples[0].t > 100) drag.samples.shift();
+    const samples = [...drag.samples, { t: performance.now(), y: e.clientY }];
+    while (samples.length > 2 && samples[samples.length - 1].t - samples[0].t > 100) samples.shift();
+    drag = { ...drag, samples };
   }
   function handleUp(e: PointerEvent) {
     if (!drag) return;
@@ -121,10 +129,14 @@
     const dist = Math.abs(target - paneP) * (closedH - openH);
     const ms = matchMedia('(prefers-reduced-motion: reduce)').matches ? 0
       : Math.round(Math.min(340, Math.max(170, dist / Math.max(Math.abs(v), 1.1))));
-    paneTr = ms ? `height ${ms}ms cubic-bezier(0.2, 0.85, 0.25, 1)` : 'none';
+    paneTr = ms ? `${ms}ms cubic-bezier(0.2, 0.85, 0.25, 1)` : 'none';
     paneP = target;
-    setTimeout(() => {
-      collapsed = target === 1;
+    settling = true;
+    clearTimeout(settleTimer);
+    const token = ++settleToken;
+    settleTimer = window.setTimeout(() => {
+      if (token !== settleToken) return; // a newer gesture took over
+      settling = false;
       paneTr = 'none';
       editor.gesturing = false;
     }, ms + 30);
@@ -167,11 +179,12 @@
   class:collapsed
   bind:clientHeight={mainH}
   style:--p={Math.min(1, Math.max(0, paneP))}
+  style:--pane-tr={paneTr === 'none' ? 'none' : `opacity ${paneTr}`}
 >
   <section
     class="stage"
     style:height={mobile ? `${stageH}px` : null}
-    style:transition={mobile ? paneTr : null}
+    style:transition={mobile && paneTr !== 'none' ? `height ${paneTr}` : null}
   >
     <Viewer onopen={open}>
       {#snippet top()}
@@ -328,7 +341,7 @@
       padding: max(24px, env(safe-area-inset-top)) 16px 24px;
     }
     main.collapsed .pager, main.collapsed .dots { display: none; }
-    .pager, .dots { opacity: clamp(0, calc(1 - var(--p) * 1.8), 1); }
+    .pager, .dots { opacity: clamp(0, calc(1 - var(--p) * 1.8), 1); transition: var(--pane-tr); }
     .handle .current {
       position: absolute;
       top: 28px;
@@ -337,6 +350,7 @@
       text-align: center;
       pointer-events: none;
       opacity: clamp(0, calc((var(--p) - 0.45) * 2.5), 1);
+      transition: var(--pane-tr);
     }
     .handle {
       display: flex;
