@@ -1,5 +1,6 @@
 import type { WorkingSpace } from '../color/spaces';
 import { LUT_SIZE } from '../color/lut';
+import type { LutData } from '../color/luts';
 import type { FilmRecipe } from '../presets';
 import { BLUR_FRAG, BRIGHT_FRAG, MAIN_FRAG, VERT } from './shaders';
 
@@ -15,6 +16,8 @@ export interface RenderParams {
   prism: number;
   /** Iridescent highlight rings and lens ghosts. */
   flare: number;
+  /** Tweak blend weights for the four directions (used when a LUT set is loaded). */
+  blend: [number, number, number, number];
   /** Prism light spots: amount, count (≤ 12), size as a fraction of the frame. */
   leak: [number, number, number];
   /** Random layout for the light spots. */
@@ -59,8 +62,8 @@ export class Renderer {
   private vao: WebGLVertexArrayObject;
   /** One immutable 3D texture per LUT size, updated in place (see setLut). */
   private lutTex: WebGLTexture | null = null;
-  private lutTextures = new Map<number, WebGLTexture>();
-  private lutBytes = new Map<number, Uint8Array>();
+  private lutTextures = new Map<string, WebGLTexture>();
+  private lutSlices = 1;
   private srcTex: WebGLTexture;
   /** Optional full-resolution crop for the fullscreen viewer. */
   private detailTex: WebGLTexture;
@@ -81,7 +84,7 @@ export class Renderer {
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     this.main = this.program(MAIN_FRAG, ['uSrc', 'uLut', 'uHalo', 'uLutSize', 'uOutRect', 'uSrcRect', 'uSrcTexel',
-      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed', 'uEdge']);
+      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed', 'uEdge', 'uLutSlices', 'uBlend']);
     this.bright = this.program(BRIGHT_FRAG, ['uSrc']);
     this.blur = this.program(BLUR_FRAG, ['uSrc', 'uDir']);
 
@@ -145,36 +148,31 @@ export class Renderer {
   private hasLut = false;
 
   /**
-   * Upload a LUT. Each size gets one immutable RGBA8 texture that is only ever
-   * updated in place: re-allocating float 3D textures at changing sizes (as
-   * Tweak does while scrubbing) made some mobile GPUs sample black. 8-bit
-   * entries are plenty, since the output is 8-bit and filtering interpolates.
+   * Upload a LUT (or a Tweak set of stacked slices). Each shape gets one
+   * immutable RGBA8 texture that is only ever updated in place: re-allocating
+   * float 3D textures at changing sizes made some mobile GPUs sample black.
    */
-  setLut(data: Float32Array) {
+  setLut(lut: LutData) {
     const gl = this.gl;
-    const n = Math.round(Math.cbrt(data.length / 4));
-    if (n < 2 || n * n * n * 4 !== data.length) return; // malformed: keep the current LUT
-    let bytes = this.lutBytes.get(n);
-    if (!bytes) this.lutBytes.set(n, (bytes = new Uint8Array(data.length)));
-    for (let i = 0; i < data.length; i++) {
-      const v = data[i];
-      bytes[i] = v > 0 ? (v < 1 ? Math.round(v * 255) : 255) : 0; // also maps NaN to 0
-    }
-    let tex = this.lutTextures.get(n);
+    const { data, n, slices } = lut;
+    if (n < 2 || slices < 1 || n * n * n * 4 * slices !== data.length) return; // malformed: keep the current LUT
+    const shape = `${n}x${slices}`;
+    let tex = this.lutTextures.get(shape);
     if (!tex) {
       tex = gl.createTexture()!;
       gl.bindTexture(gl.TEXTURE_3D, tex);
-      gl.texStorage3D(gl.TEXTURE_3D, 1, gl.RGBA8, n, n, n);
+      gl.texStorage3D(gl.TEXTURE_3D, 1, gl.RGBA8, n, n, n * slices);
       for (const p of [gl.TEXTURE_MIN_FILTER, gl.TEXTURE_MAG_FILTER]) gl.texParameteri(gl.TEXTURE_3D, p, gl.LINEAR);
       for (const p of [gl.TEXTURE_WRAP_S, gl.TEXTURE_WRAP_T, gl.TEXTURE_WRAP_R]) gl.texParameteri(gl.TEXTURE_3D, p, gl.CLAMP_TO_EDGE);
-      this.lutTextures.set(n, tex);
+      this.lutTextures.set(shape, tex);
     }
     gl.bindTexture(gl.TEXTURE_3D, tex);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
-    gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, n, n, n, gl.RGBA, gl.UNSIGNED_BYTE, bytes);
+    gl.texSubImage3D(gl.TEXTURE_3D, 0, 0, 0, 0, n, n, n * slices, gl.RGBA, gl.UNSIGNED_BYTE, data);
     gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
     this.lutTex = tex;
     this.lutSize = n;
+    this.lutSlices = slices;
     this.hasLut = true;
   }
 
@@ -242,6 +240,8 @@ export class Renderer {
     const l = this.pass(this.main, target, outW, outH);
     gl.uniform1i(l.uSrc, 0); gl.uniform1i(l.uLut, 1); gl.uniform1i(l.uHalo, 2);
     gl.uniform1f(l.uLutSize, this.lutSize);
+    gl.uniform1f(l.uLutSlices, this.lutSlices);
+    gl.uniform4f(l.uBlend, p.blend[0], p.blend[1], p.blend[2], p.blend[3]);
     gl.uniform4fv(l.uOutRect, outRect);
     gl.uniform4fv(l.uSrcRect, srcRect);
     gl.uniform2f(l.uSrcTexel, 1 / size[0], 1 / size[1]);

@@ -1,6 +1,5 @@
-import { LUT_SIZE } from './color/lut';
-import { LutCache } from './color/luts';
-import { TWEAK_NEUTRAL, tweakEffect } from './color/tweak';
+import { LutCache, Priority, type LutData } from './color/luts';
+import { TWEAK_NEUTRAL, tweakEffect, tweakWeights } from './color/tweak';
 import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
@@ -27,8 +26,8 @@ class Editor {
   tweak = $state(DEFAULTS.tweak);
   /** Tweak values the user set per preset; kept for the browser session. */
   private tweaks: Record<string, number> = loadTweaks();
-  /** LUT currently shown (shared with the fullscreen viewer). */
-  currentLut = $state.raw<Float32Array | null>(null);
+  /** LUT currently shown: base, or base + Tweak variants (shared with fullscreen). */
+  currentLut = $state.raw<LutData | null>(null);
   busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number }>(null);
   error = $state<string | null>(null);
   thumbs = $state.raw<Record<string, ImageBitmap>>({});
@@ -45,12 +44,12 @@ class Editor {
 
   params(original = false): RenderParams {
     const p = this.preset;
-    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0 };
+    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0, blend: [0, 0, 0, 0] };
     const fx = spatial(p), t = this.tweak, k = this.strength;
     // Tweak also varies effect strengths, and its value lays out the light spots.
     const e = (ch: number) => k * tweakEffect(t, ch);
     return {
-      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: 3.17 + t * 7.31,
+      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: 3.17 + t * 7.31, blend: tweakWeights(t),
       aberration: fx.aberration * e(0), split: [fx.split[0] * e(1), fx.split[1] * e(1)], prism: fx.prism * e(2),
       flare: fx.flare * e(3), leak: [fx.leak[0] * e(4), fx.leak[1], fx.leak[2] * tweakEffect(t, 5)], edge: fx.edge * e(6),
     };
@@ -108,36 +107,42 @@ class Editor {
     if (t === TWEAK_NEUTRAL) delete this.tweaks[id];
     else this.tweaks[id] = t;
     saveTweaks(this.tweaks);
-    void this.loadLut();
+    // No LUT work here: the shader blends the preset's pre-baked variants, so
+    // only the weights change. If the set isn't ready yet, it's already coming.
     // Re-render this preset's thumbnail once scrubbing settles.
     clearTimeout(this.thumbTimer);
     this.thumbTimer = window.setTimeout(() => void this.renderThumb(id, this.thumbJob), 300);
   }
   private thumbTimer = 0;
 
-  private applyLut(lut: Float32Array) {
+  private applyLut(lut: LutData) {
     this.renderer?.setLut(lut);
     this.currentLut = lut;
     this.lutVersion++;
   }
 
   /**
-   * Load the LUT for the current preset and tweak. Tweaked LUTs show a quick
-   * 17³ version first and the full 33³ one right after, so scrubbing stays live.
+   * Show the selected preset: its Tweak set if ready, else the base look right
+   * away while the set (base + variants for Tweak) is baked first in line.
+   * Then neighbours' sets are prepared, since swipes and arrows go there next.
    */
   private async loadLut() {
     const r = this.renderer;
     if (!r) return;
     const job = ++this.selectJob;
-    const id = this.presetId, t = this.tweak;
-    if (t !== TWEAK_NEUTRAL) {
-      const lo = await this.luts.get(id, r.space, THUMB_LUT, true, t, 'tweak-lo');
+    const id = this.presetId, space = r.space;
+    const ready = this.luts.peekSet(id, space);
+    if (ready) this.applyLut(ready);
+    else {
+      const base = this.luts.peekBase(id, space) ?? (await this.luts.base(id, space, Priority.Now));
       if (job !== this.selectJob) return;
-      if (lo) this.applyLut(lo);
+      this.applyLut(base);
+      const set = await this.luts.set(id, space, Priority.Now);
+      if (job !== this.selectJob) return;
+      this.applyLut(set);
     }
-    const hi = await this.luts.get(id, r.space, LUT_SIZE, true, t, t !== TWEAK_NEUTRAL ? 'tweak-hi' : undefined);
-    if (job !== this.selectJob || !hi) return;
-    this.applyLut(hi);
+    const i = ALL_PRESETS.findIndex((p) => p.id === id);
+    for (const d of [1, -1]) void this.luts.set(ALL_PRESETS[(i + d + ALL_PRESETS.length) % ALL_PRESETS.length].id, space, Priority.Soon);
   }
 
   /** Name shown briefly over the photo after switching by swipe or keyboard. */
@@ -201,9 +206,12 @@ class Editor {
       if (!(await this.renderThumb(id, job))) break;
     }
     crop.close();
-    // Warm the full-size LUTs in the background so switching presets is instant.
+    // Prepare every preset in the background: base looks first (instant
+    // switching), then Tweak sets (instant scrubbing). Selections jump ahead.
     if (job === this.thumbJob) {
-      for (const p of ALL_PRESETS) void this.luts.get(p.id, this.renderer?.space ?? r.space, undefined, false, this.tweakFor(p.id));
+      const space = this.renderer?.space ?? r.space;
+      for (const p of ALL_PRESETS) void this.luts.base(p.id, space, Priority.Background);
+      for (const p of ALL_PRESETS) void this.luts.set(p.id, space, Priority.Background);
     }
   }
 
@@ -214,13 +222,15 @@ class Editor {
     const r = this.thumbRenderer;
     if (!r || job !== this.thumbJob) return false;
     const preset = findPreset(id), t = this.tweakFor(id);
-    const lut = await this.luts.get(id, r.space, THUMB_LUT, true, t);
-    if (job !== this.thumbJob || !lut) return false;
+    const lut = t === TWEAK_NEUTRAL
+      ? await this.luts.base(id, r.space, Priority.Soon, THUMB_LUT)
+      : await this.luts.set(id, r.space, Priority.Soon, THUMB_LUT);
+    if (job !== this.thumbJob) return false;
     r.setLut(lut);
     const fx = spatial(preset);
     const e = (ch: number) => tweakEffect(t, ch);
     r.render({
-      strength: 1, sharpen: 0, film: 0, ...fx, seed: 3.17 + t * 7.31,
+      strength: 1, sharpen: 0, film: 0, ...fx, seed: 3.17 + t * 7.31, blend: tweakWeights(t),
       aberration: fx.aberration * e(0), split: [fx.split[0] * e(1), fx.split[1] * e(1)], prism: fx.prism * e(2),
       flare: fx.flare * e(3), leak: [fx.leak[0] * e(4), fx.leak[1], fx.leak[2] * e(5)], edge: fx.edge * e(6),
     }, [this.thumbSide, this.thumbSide]);
@@ -236,9 +246,10 @@ class Editor {
     const r = this.renderer!;
     const scale = Math.min(1, maxSide / Math.max(img.width, img.height), Math.sqrt(exportBudget() / (img.width * img.height)));
     const W = Math.round(img.width * scale), H = Math.round(img.height * scale);
-    // Never export with the quick 17³ LUT shown while scrubbing Tweak.
-    const lut = await this.luts.get(this.presetId, r.space, LUT_SIZE, true, this.tweak);
-    if (lut) r.setLut(lut);
+    // Export with the full Tweak set (or base at 50), even if it's still baking.
+    r.setLut(this.tweak === TWEAK_NEUTRAL
+      ? await this.luts.base(this.presetId, r.space, Priority.Now)
+      : await this.luts.set(this.presetId, r.space, Priority.Now));
     const full = await decodeFull(img.file);
     try {
       const pixels = await r.renderFull(this.params(), [W, H],
