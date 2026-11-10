@@ -15,6 +15,20 @@
   let helpOpen = $state(false);
   /** Preset list scrolled away from the top: show the top fade. */
   let listScrolled = $state(false);
+  /** More of the list below: show the bottom fade. */
+  let listMore = $state(true);
+  const listScroll = (el: HTMLElement) => {
+    listScrolled = el.scrollTop > 2;
+    listMore = el.scrollTop + el.clientHeight < el.scrollHeight - 2;
+  };
+  // Also on load and resize: a list that fits needs no bottom fade.
+  $effect(() => {
+    if (!listEl) return;
+    const ro = new ResizeObserver(() => listScroll(listEl));
+    ro.observe(listEl);
+    for (const child of listEl.children) ro.observe(child);
+    return () => ro.disconnect();
+  });
   let listEl: HTMLDivElement;
 
   // Keep the selected preset's group in view when presets change by keyboard
@@ -254,8 +268,8 @@
       <span class="current"><span class="label">{group.name}</span> {editor.preset.name}</span>
     </button>
     <div class="pager" bind:this={pager} onscroll={scrolled}>
-      <div class="page presets" class:scrolled={listScrolled}>
-        <div class="scroll" bind:this={listEl} onscroll={(e) => (listScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
+      <div class="page presets" class:scrolled={listScrolled} class:more={listMore}>
+        <div class="scroll" bind:this={listEl} onscroll={(e) => listScroll(e.currentTarget as HTMLElement)}>
           {#each GROUPS as group (group.id)}
             <div class="group">
               <span class="label">{group.name}</span>
@@ -345,14 +359,21 @@
     height: 24px;
     background: linear-gradient(transparent, var(--bg));
     pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
   }
+  .presets.more::after { opacity: 1; }
+  /* Scroll containers clip their overflow, which would crop the keyboard
+     focus ring (2px + 2px offset) at the edges. 6px of padding with a
+     matching negative margin gives it room without moving anything. */
   .scroll {
-    height: 100%;
+    height: calc(100% + 6px);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding-bottom: 24px;
+    margin: -6px -6px 0;
+    padding: 6px 6px 24px;
     scrollbar-width: none;
   }
   .scroll::-webkit-scrollbar { display: none; }
@@ -443,7 +464,8 @@
     }
     .pager::-webkit-scrollbar { display: none; }
     .page { flex: none; width: calc(100% - 40px); height: 100%; scroll-snap-align: start; }
-    .sliders { justify-content: flex-start; gap: 14px; overflow-y: auto; padding-bottom: 8px; }
+    /* Same ring room as the list; widened by the padding so content width stays put. */
+    .page.sliders { width: calc(100% - 28px); justify-content: flex-start; gap: 14px; overflow-y: auto; margin: -6px; padding: 6px 6px 14px; }
     .dots { padding: 12px 0 max(16px, env(safe-area-inset-bottom)); }
   }
 </style>

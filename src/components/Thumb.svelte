@@ -42,6 +42,8 @@
     -webkit-tap-highlight-color: transparent;
   }
   .thumb:disabled { cursor: default; }
+  /* Focusing by Tab scrolls the tile clear of the list's top/bottom fades. */
+  .thumb { scroll-margin-block: 34px; }
   /* 50%, not 999px: animating to a huge radius reaches the circle within the
      first few milliseconds and looks like a jump. */
   .selected { border-radius: 50%; }
