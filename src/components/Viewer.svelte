@@ -324,7 +324,7 @@
       {/if}
       {#if editor.comparing}<span class="badge">Original</span>
       {:else if editor.flash}<span class="badge">{editor.flash}</span>
-      {:else if editor.isSample || waiting}<span class="badge sample">Sample</span>{/if}
+      {:else if waiting || (editor.isSample && editor.sampleFresh && p === 0)}<span class="badge sample">Sample</span>{/if}
     </div>
     {#if bottom}<div class="row" bind:clientHeight={bottomH}>{@render bottom()}</div>{/if}
   </div>

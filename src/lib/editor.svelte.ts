@@ -120,6 +120,7 @@ class Editor {
   }
 
   select(id: string) {
+    if (id !== this.presetId) this.sampleFresh = false;
     this.presetId = id;
     this.tweak = this.tweakFor(id);
     return this.loadLut();
@@ -264,6 +265,7 @@ class Editor {
    * to the async path otherwise. Returns whether it rendered synchronously.
    */
   selectNow(id: string) {
+    if (id !== this.presetId) this.sampleFresh = false;
     const r = this.renderer, img = this.image;
     const t = this.tweakFor(id);
     const lut = r && (t === TWEAK_NEUTRAL
@@ -306,6 +308,8 @@ class Editor {
 
   /** The bundled sample is showing (until the user opens their own photo). */
   isSample = $state(false);
+  /** The sample is still on its first preset (the "Sample" tag shows only then). */
+  sampleFresh = $state(true);
   /** The sample is on its way: show its dithered placeholder meanwhile. */
   samplePending = $state(true);
   private userOpened = false;
