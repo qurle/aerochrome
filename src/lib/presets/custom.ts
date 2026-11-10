@@ -1,12 +1,6 @@
 import { grade, type LCh } from '../color/looks';
-import { clamp01, hueBand, labToLch, mix, oklabRamp, smoothstep } from '../color/spaces';
+import { clamp01, mix, smoothstep } from '../color/spaces';
 import { filmDefault, type Group } from './types';
-
-/** Colour ramp in OKLab over t in 0..1 (stops sorted by position). */
-const ramp = (stops: [number, string][]) => {
-  const r = oklabRamp(stops.map(([at, color]) => ({ at, color })));
-  return (t: number): LCh => labToLch(r(t));
-};
 
 /** Soft posterisation into n bands; `edge` 0 = hard steps, 0.5 = no steps. */
 const softSteps = (x: number, n: number, edge: number) => {
@@ -35,17 +29,19 @@ const tvGirl = (out: LCh, src: LCh): LCh => {
   return { L, C, h: BLUE + (PINK - BLUE) * p };
 };
 
-/** Thermal camera: fake heat from brightness; skin runs hot, sky, water and leaves run cold. */
-const heatRamp = ramp([
-  [0, '#05001a'], [0.18, '#2a0a7a'], [0.36, '#8a1a9e'], [0.54, '#e0303a'],
-  [0.7, '#ff8a00'], [0.86, '#ffe14a'], [1, '#ffffff'],
-]);
-const thermal = (_out: LCh, src: LCh): LCh => {
-  const chromatic = smoothstep(0.02, 0.06, src.C);
-  const skin = hueBand(src.h, 20, 75, 18) * chromatic;
-  const cold = hueBand(src.h, 190, 275, 20) * chromatic;
-  const leaf = hueBand(src.h, 100, 160, 20) * chromatic;
-  return heatRamp(0.12 + src.L * 0.65 + 0.32 * skin - 0.25 * cold - 0.12 * leaf);
+/**
+ * Pink & Teal: a smooth two-colour split. Cool things (leaves, sky, water) go teal,
+ * warm things (skin, reds, yellows) go pink; greys split by lightness (teal shadows,
+ * pink highlights). Lightness is kept, so it stays photographic.
+ */
+const TEAL = 192, ROSE = 356;
+const pinkTeal = (out: LCh, src: LCh): LCh => {
+  const warm = smoothstep(0.05, 0.6, Math.cos(((src.h - 22) * Math.PI) / 180));
+  const chromatic = smoothstep(0.015, 0.07, src.C);
+  const byL = smoothstep(0.2, 0.85, out.L);
+  const p = smoothstep(0.15, 0.85, mix(byL, warm * 0.9 + byL * 0.1, chromatic));
+  const C = mix(0.045, 0.05 + 0.9 * out.C, chromatic) * (0.35 + 0.65 * body(0.05 + out.L * 0.9));
+  return { L: out.L, C: Math.min(C, 0.17), h: TEAL + (ROSE - TEAL) * p };
 };
 
 /** Acid: every hue rotated a third of the wheel back, drifting with tone, at neon chroma. */
@@ -68,10 +64,10 @@ export const custom: Group = {
       look: { grade: grade({ contrast: 0.15 }), custom: tvGirl },
     },
     {
-      id: 'custom-thermal',
-      name: 'Thermal',
-      film: { grain: 0.4, halation: 0, vignette: 0, soft: 1.2, fade: 0 },
-      look: { grade: grade({}), custom: thermal },
+      id: 'custom-pink-teal',
+      name: 'Pink & Teal',
+      film: { ...filmDefault, halation: 0.4, fade: 0.4 },
+      look: { grade: grade({ contrast: 0.08, blacks: 0.03 }), custom: pinkTeal },
     },
     {
       id: 'custom-acid',
