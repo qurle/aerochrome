@@ -135,7 +135,7 @@
 
   /** Transform that places the fitted photo over the main view's photo. */
   function fromMain() {
-    const main = document.querySelector<HTMLCanvasElement>('section canvas');
+    const main = document.querySelector<HTMLCanvasElement>('section canvas.main');
     if (!main) return null;
     const r = main.getBoundingClientRect();
     if (!r.width) return null;

@@ -4,6 +4,7 @@ import { TWEAK_NEUTRAL, tweakEffect, tweakWeights } from './color/tweak';
 import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
+import { drawDitheredDraft } from './image/dither';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
 import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
 
@@ -44,9 +45,14 @@ class Editor {
   get preset() { return findPreset(this.presetId); }
 
   params(original = false): RenderParams {
-    const p = this.preset;
+    return this.paramsFor(this.presetId, this.tweak, original);
+  }
+
+  /** Render parameters for any preset at a given Tweak (current sliders otherwise). */
+  paramsFor(id: string, t: number, original = false): RenderParams {
+    const p = findPreset(id);
     if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0, blend: [0, 0, 0, 0] };
-    const fx = spatial(p), t = this.tweak, k = this.strength;
+    const fx = spatial(p), k = this.strength;
     // Tweak also varies effect strengths, and its value lays out the light spots.
     const e = (ch: number) => k * tweakEffect(t, ch);
     return {
@@ -114,6 +120,7 @@ class Editor {
   }
 
   select(id: string) {
+    if (id !== this.presetId) this.sampleFresh = false;
     this.presetId = id;
     this.tweak = this.tweakFor(id);
     return this.loadLut();
@@ -165,11 +172,119 @@ class Editor {
     for (const d of [1, -1]) void this.luts.set(ALL_PRESETS[(i + d + ALL_PRESETS.length) % ALL_PRESETS.length].id, space, Priority.Soon);
   }
 
+  /** Previous and next presets in display order (what a swipe goes to). */
+  neighbour(by: 1 | -1) {
+    const i = ALL_PRESETS.findIndex((p) => p.id === this.presetId);
+    return ALL_PRESETS[(i + by + ALL_PRESETS.length) % ALL_PRESETS.length].id;
+  }
+
+  /**
+   * Render neighbouring presets into 2D canvases for the swipe carousel, using
+   * the main renderer and canvas, then restore the current view (and copy it
+   * into `cur`, so the carousel can rotate buffers when a swipe lands).
+   * Everything after the LUT lookups runs in one task, so the main canvas never
+   * shows the neighbours. `guard` is checked right before drawing.
+   */
+  async renderNeighbours(
+    targets: { prev?: HTMLCanvasElement; next?: HTMLCanvasElement; cur?: HTMLCanvasElement },
+    w: number, h: number, guard: () => boolean = () => true,
+  ) {
+    const r = this.renderer, img = this.image, presetId = this.presetId;
+    if (!r || !img || !this.currentLut) return false;
+    const sides = (['prev', 'next'] as const).filter((k) => targets[k]);
+    const ids = { prev: this.neighbour(-1), next: this.neighbour(1) };
+    const lutOf = async (id: string) => {
+      const t = this.tweakFor(id);
+      // Soon, not Now: until these land, the carousel shows a dithered draft.
+      return t === TWEAK_NEUTRAL
+        ? this.luts.peekBase(id, r.space) ?? this.luts.base(id, r.space, Priority.Soon)
+        : this.luts.peekSet(id, r.space) ?? this.luts.set(id, r.space, Priority.Soon);
+    };
+    const luts = await Promise.all(sides.map((k) => lutOf(ids[k])));
+    // Bail if the photo or preset changed while waiting, or an export is running.
+    // (The current LUT may have been upgraded meanwhile: restore whichever is live.)
+    const cur = this.currentLut;
+    if (r !== this.renderer || img !== this.image || !cur || presetId !== this.presetId || this.busy || !guard()) return false;
+    const c = r.canvas as HTMLCanvasElement;
+    if (c.width !== w || c.height !== h) return false;
+    const copy = (t: HTMLCanvasElement) => {
+      if (t.width !== w || t.height !== h) { t.width = w; t.height = h; }
+      t.getContext('2d', { colorSpace: r.space })!.drawImage(c, 0, 0);
+    };
+    sides.forEach((k, i) => {
+      const id = ids[k];
+      r.setLut(luts[i]);
+      r.render(this.paramsFor(id, this.tweakFor(id)), [img.width, img.height]);
+      copy(targets[k]!);
+    });
+    r.setLut(cur);
+    r.render(this.params(this.comparing), [img.width, img.height]);
+    if (targets.cur) copy(targets.cur);
+    return true;
+  }
+
+  /**
+   * Draft neighbours for the swipe carousel: rendered with the small (17³)
+   * thumbnail LUT and drawn as a low-res dither, synchronously. Sides whose
+   * small LUT isn't cached yet are requested (not waited for); `pending`
+   * resolves once those are baked, so the caller can try again.
+   */
+  renderDrafts(targets: { prev?: HTMLCanvasElement; next?: HTMLCanvasElement }) {
+    const r = this.renderer, img = this.image, cur = this.currentLut;
+    const drawn: { prev?: boolean; next?: boolean } = {};
+    const waits: Promise<unknown>[] = [];
+    if (!r || !img || !cur || this.busy) return { drawn, pending: null };
+    const c = r.canvas as HTMLCanvasElement;
+    let touched = false;
+    for (const k of ['prev', 'next'] as const) {
+      const t = targets[k];
+      if (!t) continue;
+      const id = this.neighbour(k === 'prev' ? -1 : 1), tw = this.tweakFor(id);
+      const lut = tw === TWEAK_NEUTRAL ? this.luts.peekBase(id, r.space, THUMB_LUT) : this.luts.peekSet(id, r.space, THUMB_LUT);
+      if (!lut) {
+        waits.push(tw === TWEAK_NEUTRAL ? this.luts.base(id, r.space, Priority.Now, THUMB_LUT) : this.luts.set(id, r.space, Priority.Now, THUMB_LUT));
+        continue;
+      }
+      r.setLut(lut);
+      r.render(this.paramsFor(id, tw), [img.width, img.height]);
+      if (t.width !== c.width || t.height !== c.height) { t.width = c.width; t.height = c.height; }
+      drawDitheredDraft(t, c, r.space);
+      drawn[k] = true;
+      touched = true;
+    }
+    if (touched) {
+      r.setLut(cur);
+      r.render(this.params(this.comparing), [img.width, img.height]);
+    }
+    return { drawn, pending: waits.length ? Promise.all(waits) : null };
+  }
+
+  /**
+   * Switch preset and render it on the main canvas within this task, if its
+   * LUT is already cached (so a swipe can land in a single frame). Falls back
+   * to the async path otherwise. Returns whether it rendered synchronously.
+   */
+  selectNow(id: string) {
+    if (id !== this.presetId) this.sampleFresh = false;
+    const r = this.renderer, img = this.image;
+    const t = this.tweakFor(id);
+    const lut = r && (t === TWEAK_NEUTRAL
+      ? this.luts.peekBase(id, r.space) ?? this.luts.peekSet(id, r.space)
+      : this.luts.peekSet(id, r.space));
+    this.presetId = id;
+    this.tweak = t;
+    if (!r || !img || !lut) { void this.loadLut(); return false; }
+    this.applyLut(lut);
+    r.render(this.params(this.comparing), [img.width, img.height]);
+    void this.loadLut(); // upgrades to the Tweak set if only the base was cached
+    return true;
+  }
+
   /** Name shown briefly over the photo after switching by swipe or keyboard. */
   flash = $state<string | null>(null);
   private flashTimer = 0;
 
-  private announce() {
+  announce() {
     this.flash = `${groupOf(this.presetId).name} ${this.preset.name}`;
     clearTimeout(this.flashTimer);
     this.flashTimer = window.setTimeout(() => (this.flash = null), 1100);
@@ -193,6 +308,8 @@ class Editor {
 
   /** The bundled sample is showing (until the user opens their own photo). */
   isSample = $state(false);
+  /** The sample is still on its first preset (the "Sample" tag shows only then). */
+  sampleFresh = $state(true);
   /** The sample is on its way: show its dithered placeholder meanwhile. */
   samplePending = $state(true);
   private userOpened = false;
