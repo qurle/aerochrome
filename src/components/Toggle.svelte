@@ -1,5 +1,4 @@
 <script lang="ts">
-  import { flip } from 'svelte/animate';
   import { cubicOut } from 'svelte/easing';
 
   let {
@@ -35,16 +34,20 @@
     return [...busyLabel].map((ch, i) => (j < label.length && ch === label[j] ? { ch, key: `l${j++}` } : { ch, key: `b${i}` }));
   });
 
-  /** New letters fade and rise in; leaving ones fade out where they stood. */
-  function letter(_: Element, { delay = 0 } = {}) {
-    return { delay, duration: 260, easing: cubicOut, css: (t: number) => `opacity: ${t}; translate: 0 ${(1 - t) * 4}px` };
+  /**
+   * Letters fade in and out while their width grows or shrinks, so the rest of
+   * the label glides aside both ways instead of jumping once a letter is gone.
+   */
+  function letter(node: Element) {
+    const w = node.getBoundingClientRect().width;
+    return { duration: 260, easing: cubicOut, css: (t: number) => `opacity: ${t}; width: ${t * w}px; translate: 0 ${(1 - t) * 4}px` };
   }
 </script>
 
 <button class="toggle" role="switch" aria-checked={checked} aria-busy={busy} aria-label={label} style:--c={color} {title} onclick={() => onchange(!checked)}>
   <span class="label" class:busy aria-hidden="true">
     {#each letters as l, i (l.key)}
-      <span class="ch" style:--i={i} animate:flip={{ duration: 260, easing: cubicOut }} transition:letter>{l.ch}</span>
+      <span class="ch" style:--i={i} transition:letter>{l.ch}</span>
     {/each}
   </span>
   <span class="note" class:error aria-live="polite">{note}</span>
@@ -65,7 +68,7 @@
     -webkit-tap-highlight-color: transparent;
   }
   .label { color: var(--muted); white-space: pre; transition: color 0.3s var(--ease); }
-  .ch { display: inline-block; }
+  .ch { display: inline-block; overflow: hidden; vertical-align: top; }
   /* Working: the label darkens and a shimmer runs across it, letter by letter. */
   .label.busy { color: var(--ink); }
   .busy .ch { animation: shimmer 1.6s ease-in-out infinite; animation-delay: calc(var(--i) * 50ms); }
