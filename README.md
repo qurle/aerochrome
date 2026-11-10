@@ -49,6 +49,8 @@ commercial, replace the model with a permissively licensed one.
   50 for presets you haven't tweaked. Neighbouring values look alike, so scrubbing morphs smoothly.
 - Click or tap the photo for a fullscreen view: drag to pan; pinch, scroll or double-tap to zoom.
   Zoomed views render from the full-resolution original.
+- Your photo and selected preset survive reloads of the same tab. The original file is kept in
+  IndexedDB on your device, never uploaded, and dropped once the tab is closed.
 - On phones, swipe the photo left/right to change preset and drag the handle down to hide the
   presets pane.
 

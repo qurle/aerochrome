@@ -8,6 +8,7 @@ import { Renderer, type MaskData, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { drawDitheredDraft } from './image/dither';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
+import { loadPhoto, savePhoto } from './image/persist';
 import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
 import { detectScene } from './seg/detect';
 import { modelCached } from './seg/model';
@@ -26,7 +27,8 @@ export const usesFoliage = (id: string) => groupOf(id).id !== 'custom';
 
 class Editor {
   image = $state.raw<LoadedImage | null>(null);
-  presetId = $state(ALL_PRESETS[0].id);
+  /** Restored after a reload (see PRESET_KEY). */
+  presetId = $state(loadPreset());
   strength = $state(DEFAULTS.strength);
   sharpen = $state(DEFAULTS.sharpen);
   film = $state(DEFAULTS.film);
@@ -161,6 +163,7 @@ class Editor {
   select(id: string) {
     if (id !== this.presetId) this.sampleFresh = false;
     this.presetId = id;
+    savePreset(id);
     this.tweak = this.tweakFor(id);
     return this.loadLut();
   }
@@ -311,6 +314,7 @@ class Editor {
       ? this.lut.peekBase(id, r.space) ?? this.lut.peekSet(id, r.space)
       : this.lut.peekSet(id, r.space));
     this.presetId = id;
+    savePreset(id);
     this.tweak = t;
     if (!r || !img || !lut) { void this.loadLut(); return false; }
     this.applyLut(lut);
@@ -362,9 +366,17 @@ class Editor {
   samplePending = $state(true);
   private userOpened = false;
 
-  /** Show the bundled sample photo, unless the user has already opened one. */
+  /**
+   * Show the photo this tab had before a reload, else the bundled sample,
+   * unless the user has already opened one.
+   */
   async loadSample() {
     if (this.image || this.userOpened) { this.samplePending = false; return; }
+    const restored = await loadPhoto();
+    if (restored && !this.image && !this.userOpened) {
+      await this.open(restored, false, true);
+      if (this.image) return;
+    }
     try {
       // Hashed asset: cached for good by the browser and the service worker.
       const res = await fetch(sampleUrl);
@@ -377,7 +389,8 @@ class Editor {
     }
   }
 
-  async open(file: File, sample = false) {
+  /** `restored`: the photo comes back from before a reload (already stored). */
+  async open(file: File, sample = false, restored = false) {
     if (!sample) { this.userOpened = true; this.samplePending = false; }
     this.error = null;
     this.pending = null;
@@ -387,6 +400,7 @@ class Editor {
       this.image?.preview.close();
       this.image = img;
       this.isSample = sample;
+      if (!sample && !restored) void savePhoto(file);
       this.renderer?.setSource(img.preview);
       // A new photo needs its own mask: show it by colour rules until detected.
       this.clearMask();
@@ -652,6 +666,19 @@ function spatial(p: Preset) {
 
 const TWEAKS_KEY = 'aerochrome:tweaks';
 const FOLIAGE_KEY = 'aerochrome:foliage';
+const PRESET_KEY = 'aerochrome:preset';
+
+function loadPreset() {
+  try {
+    const id = sessionStorage.getItem(PRESET_KEY);
+    if (id && ALL_PRESETS.some((p) => p.id === id)) return id;
+  } catch { /* storage unavailable */ }
+  return ALL_PRESETS[0].id;
+}
+
+function savePreset(id: string) {
+  try { sessionStorage.setItem(PRESET_KEY, id); } catch { /* storage unavailable */ }
+}
 
 function loadFlag(key: string) {
   try { return sessionStorage.getItem(key) === '1'; } catch { return false; }
