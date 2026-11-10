@@ -51,17 +51,25 @@
 
   // Motion per layer, from progress. Incoming starts 55% of a width out,
   // at 0.8 scale and transparent; the outgoing photo slides fully out.
-  // Fades are sequential, never overlapping, so each layer stays solid:
-  // the outgoing photo fades out over the first half of the swipe, the
-  // incoming one fades in over the second half.
+  // Layering, never a cross-fade: the incoming photo fades in *under* the
+  // current one, which stays fully opaque on top until the two no longer
+  // overlap, and only then fades out.
   const ease = (a: number, b: number, x: number) => {
     const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
     return t * t * (3 - 2 * t);
   };
-  const cur = $derived({ x: p * fit.w, s: 1 - Math.abs(p) * 0.12, o: 1 - ease(0, 0.5, Math.abs(p)) });
+  const OUT_SCALE = 0.12, IN_FROM = 0.55, IN_SCALE = 0.8;
+  // Progress at which the photos stop overlapping: centre distance
+  // (IN_FROM + (1 - IN_FROM)·k)·w reaches the sum of their half widths
+  // ((1 - OUT_SCALE·k) + (IN_SCALE + (1 - IN_SCALE)·k))·w / 2.
+  const SEPARATE = (1 + IN_SCALE - 2 * IN_FROM) / (2 * (1 - IN_FROM) + OUT_SCALE - (1 - IN_SCALE));
+  const cur = $derived.by(() => {
+    const k = Math.abs(p);
+    return { x: p * fit.w, s: 1 - OUT_SCALE * k, o: 1 - ease(SEPARATE, 1, k) };
+  });
   const inc = $derived.by(() => {
     const k = Math.abs(p);
-    return { x: Math.sign(p) * -1 * (1 - k) * fit.w * 0.55, s: 0.8 + 0.2 * k, o: ease(0.5, 1, k) };
+    return { x: Math.sign(p) * -1 * (1 - k) * fit.w * IN_FROM, s: IN_SCALE + (1 - IN_SCALE) * k, o: ease(0, 0.55, k) };
   });
 
   function stateKey() {
