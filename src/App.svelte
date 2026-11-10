@@ -234,6 +234,8 @@
     shown?.kind === 'copy' ? `${Math.round((shown.progress ?? 0) * 100)}%` :
     shown?.kind === 'copied' ? 'Copied' : 'Copy');
   const noImage = $derived(!editor.image);
+  /** A photo is on its way (sample or restored): its dithered placeholder shows. */
+  const waiting = $derived(!editor.image && editor.samplePending);
 </script>
 
 <svelte:window
@@ -266,8 +268,9 @@
   >
     <Viewer onopen={open}>
       {#snippet bottom()}
-        <div class="actions">
-          {#if editor.isSample || (editor.samplePending && !editor.image)}
+        <!-- Hidden (space kept) until a photo shows, so nothing shifts or swaps. -->
+        <div class="actions" class:waiting>
+          {#if editor.isSample || (waiting && !editor.restoring)}
             <!-- Sample: one action, open your own photo. Copy and export still
                  work on the sample through their shortcuts. -->
             <span class="spacer"></span>
@@ -373,7 +376,8 @@
     flex-direction: column;
     padding: 32px clamp(32px, 9vw, 128px);
   }
-  .actions { display: flex; flex: 1; gap: 8px; align-items: center; }
+  .actions { display: flex; flex: 1; gap: 8px; align-items: center; transition: opacity 0.3s var(--ease); }
+  .actions.waiting { opacity: 0; visibility: hidden; }
   .spacer { flex: 1; }
   .error { margin: 16px 0 0; color: var(--accent); text-align: center; font-size: 14px; }
 

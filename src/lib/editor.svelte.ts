@@ -8,6 +8,7 @@ import { Renderer, type MaskData, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { drawDitheredDraft } from './image/dither';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
+import { hasSavedPhoto, loadPhoto, loadPlaceholder, savePhoto, savePlaceholder, type Placeholder } from './image/persist';
 import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
 import { detectScene } from './seg/detect';
 import { modelCached } from './seg/model';
@@ -26,7 +27,8 @@ export const usesFoliage = (id: string) => groupOf(id).id !== 'custom';
 
 class Editor {
   image = $state.raw<LoadedImage | null>(null);
-  presetId = $state(ALL_PRESETS[0].id);
+  /** Restored after a reload (see PRESET_KEY). */
+  presetId = $state(loadPreset());
   strength = $state(DEFAULTS.strength);
   sharpen = $state(DEFAULTS.sharpen);
   film = $state(DEFAULTS.film);
@@ -161,6 +163,7 @@ class Editor {
   select(id: string) {
     if (id !== this.presetId) this.sampleFresh = false;
     this.presetId = id;
+    savePreset(id);
     this.tweak = this.tweakFor(id);
     return this.loadLut();
   }
@@ -311,6 +314,7 @@ class Editor {
       ? this.lut.peekBase(id, r.space) ?? this.lut.peekSet(id, r.space)
       : this.lut.peekSet(id, r.space));
     this.presetId = id;
+    savePreset(id);
     this.tweak = t;
     if (!r || !img || !lut) { void this.loadLut(); return false; }
     this.applyLut(lut);
@@ -360,11 +364,26 @@ class Editor {
   sampleFresh = $state(true);
   /** The sample is on its way: show its dithered placeholder meanwhile. */
   samplePending = $state(true);
+  /** A reload is bringing back this tab's photo (instead of the sample). */
+  restoring = $state(hasSavedPhoto());
+  /** Its dithered frame from before the reload, if one was kept. */
+  restorePlaceholder: Placeholder | null = this.restoring ? loadPlaceholder() : null;
   private userOpened = false;
 
-  /** Show the bundled sample photo, unless the user has already opened one. */
+  /**
+   * Show the photo this tab had before a reload, else the bundled sample,
+   * unless the user has already opened one.
+   */
   async loadSample() {
-    if (this.image || this.userOpened) { this.samplePending = false; return; }
+    // A photo the user opened ends the wait itself once decoded.
+    if (this.image || this.userOpened) { if (this.image) this.samplePending = false; return; }
+    const restored = await loadPhoto();
+    if (restored && !this.image && !this.userOpened) {
+      await this.open(restored, false, true);
+      this.restoring = false;
+      if (this.image) return;
+    }
+    this.restoring = false;
     try {
       // Hashed asset: cached for good by the browser and the service worker.
       const res = await fetch(sampleUrl);
@@ -373,12 +392,14 @@ class Editor {
       if (this.image || this.userOpened) return;
       await this.open(file, true);
     } catch { /* offline on first visit: fall back to the empty state */ } finally {
-      this.samplePending = false;
+      if (!this.userOpened) this.samplePending = false;
     }
   }
 
-  async open(file: File, sample = false) {
-    if (!sample) { this.userOpened = true; this.samplePending = false; }
+  /** `restored`: the photo comes back from before a reload (already stored). */
+  async open(file: File, sample = false, restored = false) {
+    // The placeholder stays up until this photo is decoded (no empty state in between).
+    if (!sample) this.userOpened = true;
     this.error = null;
     this.pending = null;
     try {
@@ -386,15 +407,54 @@ class Editor {
       if (sample && this.userOpened) { img.preview.close(); return; } // user won the race
       this.image?.preview.close();
       this.image = img;
+      this.samplePending = false;
       this.isSample = sample;
+      if (!sample && !restored) void savePhoto(file);
       this.renderer?.setSource(img.preview);
       // A new photo needs its own mask: show it by colour rules until detected.
       this.clearMask();
       void this.buildThumbs();
       if (this.foliage) void this.detect();
     } catch (e) {
+      if (!sample) this.samplePending = false;
       this.error = (e as Error).message;
     }
+  }
+
+  private placeholderTimer = 0;
+  /** The view changed since the last placeholder capture. */
+  private placeholderDirty = false;
+
+  /**
+   * Keep a tiny dithered copy of the current frame for the next reload, once
+   * edits settle (and when the page is left, see capturePlaceholder). Only for
+   * the user's own photo; the sample ships its own.
+   */
+  schedulePlaceholder() {
+    clearTimeout(this.placeholderTimer);
+    if (this.isSample || !this.image) return;
+    this.placeholderDirty = true;
+    this.placeholderTimer = window.setTimeout(() => this.capturePlaceholder(), 1000);
+  }
+
+  /** Capture now if the view changed (also called when the page is hidden or unloaded). */
+  capturePlaceholder() {
+    clearTimeout(this.placeholderTimer);
+    const r = this.renderer, img = this.image;
+    if (!this.placeholderDirty || !r || !img || this.isSample || this.busy) return;
+    this.placeholderDirty = false;
+    // Render small off-screen: reading the full-size frame back from the GPU
+    // stalled the page for hundreds of milliseconds.
+    const w = 192, h = Math.max(1, Math.round((w * img.height) / img.width));
+    const frame = document.createElement('canvas');
+    frame.width = w; frame.height = h;
+    const pixels = new Uint8ClampedArray(r.renderSmall(this.params(), [img.width, img.height], w, h).buffer);
+    frame.getContext('2d', { colorSpace: r.space })!.putImageData(new ImageData(pixels, w, h, { colorSpace: r.space }), 0, 0);
+    const small = document.createElement('canvas');
+    small.width = 96;
+    small.height = Math.max(1, Math.round((96 * h) / w));
+    drawDitheredDraft(small, frame, r.space);
+    savePlaceholder({ src: small.toDataURL('image/png'), aspect: img.width / img.height });
   }
 
   private async buildThumbs() {
@@ -652,6 +712,19 @@ function spatial(p: Preset) {
 
 const TWEAKS_KEY = 'aerochrome:tweaks';
 const FOLIAGE_KEY = 'aerochrome:foliage';
+const PRESET_KEY = 'aerochrome:preset';
+
+function loadPreset() {
+  try {
+    const id = sessionStorage.getItem(PRESET_KEY);
+    if (id && ALL_PRESETS.some((p) => p.id === id)) return id;
+  } catch { /* storage unavailable */ }
+  return ALL_PRESETS[0].id;
+}
+
+function savePreset(id: string) {
+  try { sessionStorage.setItem(PRESET_KEY, id); } catch { /* storage unavailable */ }
+}
 
 function loadFlag(key: string) {
   try { return sessionStorage.getItem(key) === '1'; } catch { return false; }
