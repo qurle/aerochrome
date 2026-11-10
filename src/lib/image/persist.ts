@@ -6,6 +6,8 @@
 const DB_NAME = 'aerochrome';
 const STORE = 'photos';
 const TAB_KEY = 'aerochrome:tab';
+/** Set once this tab has stored a photo, so startup can restore it right away. */
+const SAVED_KEY = 'aerochrome:photo';
 /** Entries of other tabs older than this are treated as abandoned. */
 const STALE_MS = 2 * 24 * 60 * 60 * 1000;
 
@@ -45,7 +47,13 @@ async function run<T>(mode: IDBTransactionMode, fn: (s: IDBObjectStore) => IDBRe
 export async function savePhoto(file: File) {
   try {
     await run('readwrite', (s) => s.put({ file, saved: Date.now() } satisfies Entry, tabId()));
+    sessionStorage.setItem(SAVED_KEY, '1');
   } catch { /* no storage: reloads start over */ }
+}
+
+/** Whether this tab stored a photo before (a reload should restore it first thing). */
+export function hasSavedPhoto() {
+  try { return sessionStorage.getItem(SAVED_KEY) === '1'; } catch { return false; }
 }
 
 /** This tab's photo, if it had one; also clears out abandoned photos of closed tabs. */
