@@ -143,7 +143,7 @@
   // photo (or a swipe that just landed) gets its neighbours right away.
   let lastImage: unknown = null;
   $effect(() => {
-    void [editor.image, editor.lutVersion, editor.strength, editor.sharpen, editor.film, editor.tweak, fit.w, fit.h];
+    void [editor.image, editor.lutVersion, editor.strength, editor.sharpen, editor.film, editor.tweak, editor.maskOn, fit.w, fit.h];
     if (editor.gesturing) return;
     const fresh = editor.image !== lastImage;
     lastImage = editor.image;

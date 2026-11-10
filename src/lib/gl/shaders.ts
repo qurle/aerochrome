@@ -17,8 +17,12 @@ uniform sampler2D uSrc;
 uniform sampler3D uLut;
 uniform sampler2D uHalo;
 uniform float uLutSize;
-uniform float uLutSlices; // 1 = base only; 9 = base + (+/−) for 4 Tweak directions
+uniform float uLutSlices; // 1 = base only; 9 = base + (+/−) for 4 Tweak directions; ×3 with mask variants
+uniform float uLutGroups; // 1, or 3: normal, masked-foliage and masked-object looks in turn
 uniform vec4 uBlend;      // Tweak weights per direction, -1..1
+uniform sampler2D uMask;  // scene mask: R vegetation, G forested terrain, B man-made objects
+uniform vec4 uMaskRect;   // mask uv of this image's top-left and bottom-right corners
+uniform float uMaskMix;   // 0 = colour rules only, 1 = mask fully applied
 uniform vec4 uOutRect;   // output region in full-image uv (x0, y0, x1, y1), top-left origin
 uniform vec4 uSrcRect;   // region covered by uSrc, same space
 uniform vec2 uSrcTexel;  // 1 / uSrc size in texels
@@ -77,15 +81,31 @@ vec3 lutSlice(vec3 c, float slice) {
 
 // Base look plus Tweak: base + sum |w| * (variant - base), picking the + or −
 // variant by the weight's sign. Pre-baked, so scrubbing only changes uBlend.
-vec3 lut(vec3 c) {
-  vec3 base = lutSlice(c, 0.0);
-  if (uLutSlices < 2.0) return base;
+// g picks the look variant (see uLutGroups).
+vec3 lutSet(vec3 c, float g) {
+  float per = uLutSlices / uLutGroups, o = g * per;
+  vec3 base = lutSlice(c, o);
+  if (per < 2.0) return base;
   vec3 r = base;
   for (int j = 0; j < 4; j++) {
     float w = uBlend[j];
-    if (w != 0.0) r += abs(w) * (lutSlice(c, w > 0.0 ? 1.0 + 2.0 * float(j) : 2.0 + 2.0 * float(j)) - base);
+    if (w != 0.0) r += abs(w) * (lutSlice(c, o + (w > 0.0 ? 1.0 : 2.0) + 2.0 * float(j)) - base);
   }
   return clamp(r, 0.0, 1.0);
+}
+
+// Detect foliage: where the scene mask sees plants (or forested hills), the
+// foliage variant applies; on confident non-plant objects, the object variant.
+vec3 lut(vec3 c, vec2 u) {
+  vec3 r = lutSet(c, 0.0);
+  if (uLutGroups < 2.0 || uMaskMix <= 0.0) return r;
+  vec3 m = texture(uMask, mix(uMaskRect.xy, uMaskRect.zw, u)).rgb;
+  float plantArea = clamp(m.r + m.g, 0.0, 1.0);
+  float plant = plantArea * uMaskMix;
+  float thing = smoothstep(0.55, 0.85, m.b) * (1.0 - plantArea) * uMaskMix;
+  if (plant > 0.004) r = mix(r, lutSet(c, 1.0), plant);
+  if (thing > 0.004) r = mix(r, lutSet(c, 2.0), thing);
+  return r;
 }
 
 void main() {
@@ -122,7 +142,7 @@ void main() {
   float k = uSharpen * 1.8 - uFilm * uFilmMix.w * 0.55;
   c = clamp(c + (c - blur) * k, 0.0, 1.0);
 
-  vec3 col = mix(c, lut(c), uStrength);
+  vec3 col = mix(c, lut(c, u), uStrength);
 
   if (uEdge > 0.0) {
     // Holographic edges: contrast edges pick up a rainbow whose hue follows the

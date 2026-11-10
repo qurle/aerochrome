@@ -23,6 +23,25 @@ Colour is processed in Display P3 where the browser supports it (Chrome, Safari)
 embed a P3 ICC profile. Export renders full resolution in tiles and encodes JPEG (q96, 4:4:4)
 with MozJPEG in a worker. Copy puts a PNG (max 4096 px) on the clipboard.
 
+### Detect foliage
+
+Colour alone can't tell hazy, blue-grey distant forest from sky or water, or a green car from
+a hedge. The optional **Detect foliage** switch (off by default, remembered for the session)
+runs a segmentation model on the device (`src/lib/seg/`): SegFormer-B2 trained on ADE20K,
+int8 ONNX, ~21 MB gzipped, downloaded on first use and kept in Cache Storage. Its class
+probabilities are grouped into vegetation, forested terrain (mountain, hill) and man-made
+objects, snapped to the photo's edges with a colour guided filter, and passed to the shader as
+a mask. Each preset then bakes two more LUT variants: one that treats any plant-plausible
+colour as foliage (hazy foliage drifts towards the sky colour, so on Aerochrome it turns muted
+magenta), and one where greens on objects go blue, as non-plant greens do on infrared film.
+The mask cross-fades in when ready. Custom presets ignore it.
+
+Inference uses ONNX Runtime Web (WASM). The site is served cross-origin isolated
+(COOP/COEP headers in `vercel.json` and `vite.config.ts`) so it can use several threads.
+
+**Licence:** NVIDIA's SegFormer weights are for non-commercial use only. If the app goes
+commercial, replace the model with a permissively licensed one.
+
 ## Using it
 
 - **Tweak** (0–100) gives each preset reproducible variations; 50 is the preset as designed.
@@ -67,3 +86,5 @@ npm run build   # static build in dist/, deployable to Vercel as is
   and downscaled beyond that with a notice.
 - HEIC opens only where the browser can decode it (Safari).
 - EXIF metadata is not carried over to exports.
+- Detect foliage takes a few seconds per photo (about 3 s on a 4-core desktop CPU; slower on
+  phones) and works from a ~700 px view of the photo, so very thin branches follow colour rules.

@@ -4,9 +4,20 @@
   import Help from './components/Help.svelte';
   import Slider from './components/Slider.svelte';
   import Thumb from './components/Thumb.svelte';
+  import Toggle from './components/Toggle.svelte';
   import Viewer from './components/Viewer.svelte';
-  import { DEFAULTS, editor } from './lib/editor.svelte';
+  import { slide } from 'svelte/transition';
+  import { DEFAULTS, editor, usesFoliage } from './lib/editor.svelte';
   import { GROUPS, groupOf } from './lib/presets';
+  import { MODEL_MB } from './lib/seg/model';
+
+  void editor.checkModel();
+  const foliageNote = $derived.by(() => {
+    const st = editor.foliageStatus;
+    if (st?.kind === 'download') return `${Math.round(st.progress * 100)}%`;
+    if (st?.kind === 'error') return 'Failed';
+    return editor.foliageDownload && !editor.foliage ? `${MODEL_MB} MB` : '';
+  });
 
   let input: HTMLInputElement;
   let dragging = $state(false);
@@ -79,24 +90,14 @@
     const t = e.target as HTMLElement;
     return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
   }
-  /**
-   * Show a shortcut as a button press: the matching button scales down and
-   * back over 500 ms; on the sample (no such button) the photo does.
-   */
-  function press(label: 'Copy' | 'Export') {
-    if (!editor.image || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const btn = [...document.querySelectorAll<HTMLElement>(`section button[title^="${label}"]`)].find((b) => b.offsetParent);
-    const el = btn ?? document.querySelector<HTMLElement>('section .image');
-    el?.animate(
-      btn
-        ? [
-            { transform: 'scale(1)', borderRadius: '0px' },
-            { transform: 'scale(0.92)', borderRadius: 'var(--r-button)' },
-            { transform: 'scale(1)', borderRadius: '0px' },
-          ]
-        : [{ transform: 'scale(1)' }, { transform: 'scale(0.97)' }, { transform: 'scale(1)' }],
-      { duration: 500, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
-    );
+  /** Show a copy or export shortcut on the photo: it pulses (`.pressed` in app.css). */
+  function press() {
+    const el = document.querySelector<HTMLElement>('section .image');
+    if (!el) return;
+    el.classList.remove('pressed');
+    void el.offsetWidth; // restart the animation if it's still running
+    el.classList.add('pressed');
+    el.addEventListener('animationend', () => el.classList.remove('pressed'), { once: true });
   }
 
   // Shortcuts match physical keys (KeyboardEvent.code), so they work in any
@@ -125,8 +126,8 @@
     // ⌘/Ctrl+Shift combos belong to the browser (⌘⇧C inspects, ⌘⇧I/J open DevTools…).
     if (cmd && e.shiftKey) return;
     if (cmd) {
-      if (c === 'KeyC' && !getSelection()?.toString()) { press('Copy'); editor.copy(); }
-      else if (c === 'KeyE' || c === 'KeyS') { press('Export'); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
+      if (c === 'KeyC' && !getSelection()?.toString()) { if (editor.copy()) press(); }
+      else if (c === 'KeyE' || c === 'KeyS') { if (editor.pending) void editor.savePending(); else if (editor.exportJpeg()) press(); }
       else if (c === 'KeyO') open();
       else return;
     } else if (c === 'ArrowRight') editor.step(1);
@@ -232,7 +233,6 @@
   const copyLabel = $derived(
     shown?.kind === 'copy' ? `${Math.round((shown.progress ?? 0) * 100)}%` :
     shown?.kind === 'copied' ? 'Copied' : 'Copy');
-  const exportClick = () => (editor.pending ? editor.savePending() : editor.exportJpeg());
   const noImage = $derived(!editor.image);
 </script>
 
@@ -265,9 +265,6 @@
     style:transition={mobile && paneTr !== 'none' ? `height ${paneTr}` : null}
   >
     <Viewer onopen={open}>
-      {#snippet top()}
-        <div class="desktop" class:invisible={editor.isSample || (editor.samplePending && !editor.image)}><Button title="Open ({mod}O)" onclick={open}>Open</Button></div>
-      {/snippet}
       {#snippet bottom()}
         <div class="actions">
           {#if editor.isSample || (editor.samplePending && !editor.image)}
@@ -277,12 +274,12 @@
             <Button variant="accent" title="Open ({mod}O)" onclick={open}>Open your photo</Button>
             <span class="spacer"></span>
           {:else}
-            <span class="mobile"><Button onclick={open}>Open</Button></span>
+            <Button title="Open ({mod}O)" onclick={open}>Open</Button>
             <span class="spacer"></span>
             <span class="desktop">
               <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!shown} onclick={() => editor.copy()}>{copyLabel}</Button>
             </span>
-            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!shown && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
+            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!shown && !editor.pending)} onclick={() => (editor.pending ? editor.savePending() : editor.exportJpeg())}>{exportLabel}</Button>
           {/if}
         </div>
       {/snippet}
@@ -336,6 +333,21 @@
         <Slider label="Strength" color="var(--coral)" bind:value={editor.strength} defaultValue={DEFAULTS.strength} />
         <Slider label="Sharpen" color="var(--ink)" bind:value={editor.sharpen} defaultValue={DEFAULTS.sharpen} />
         <Slider label="Filmness" color="var(--steel)" bind:value={editor.film} defaultValue={DEFAULTS.film} />
+        {#if usesFoliage(editor.presetId)}
+          <div class="foliage" transition:slide={{ duration: 220 }}>
+            <Toggle
+              label="Detect foliage"
+              busyLabel="Detecting foliage…"
+              color="var(--accent)"
+              checked={editor.foliage}
+              note={foliageNote}
+              busy={editor.foliageStatus?.kind === 'detect' || editor.foliageStatus?.kind === 'download'}
+              error={editor.foliageStatus?.kind === 'error'}
+              title={editor.foliageStatus?.kind === 'error' ? editor.foliageStatus.message : 'Find plants with an on-device model, so distant and hazy foliage colours too'}
+              onchange={(on) => editor.setFoliage(on)}
+            />
+          </div>
+        {/if}
       </div>
     </div>
     <div class="dots mobile" role="tablist">
@@ -359,18 +371,17 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    padding: clamp(32px, 9vw, 128px);
+    padding: 32px clamp(32px, 9vw, 128px);
   }
   .actions { display: flex; flex: 1; gap: 8px; align-items: center; }
   .spacer { flex: 1; }
-  .invisible { visibility: hidden; }
   .error { margin: 16px 0 0; color: var(--accent); text-align: center; font-size: 14px; }
 
   .settings {
     flex: none;
     width: 441px;
     border-left: 1px solid var(--line);
-    padding: 64px 80px;
+    padding: 32px 80px;
     display: flex;
     flex-direction: column;
   }

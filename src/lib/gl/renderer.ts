@@ -24,7 +24,12 @@ export interface RenderParams {
   seed: number;
   /** Rainbow tint on contrast edges (0..1). */
   edge: number;
+  /** How much the scene mask (Detect foliage) applies, 0..1; needs a masked LUT set. */
+  mask: number;
 }
+
+/** Scene mask (see lib/seg/detect): RGBA8, top row first. */
+export interface MaskData { data: Uint8Array; width: number; height: number }
 
 type GL = WebGL2RenderingContext;
 type Canvas = HTMLCanvasElement | OffscreenCanvas;
@@ -64,6 +69,11 @@ export class Renderer {
   private lutTex: WebGLTexture | null = null;
   private lutTextures = new Map<string, WebGLTexture>();
   private lutSlices = 1;
+  private lutGroups = 1;
+  private maskTex: WebGLTexture;
+  private hasMask = false;
+  /** Mask uv covered by this renderer's image (thumbnails show a centre crop). */
+  private maskRect = [0, 0, 1, 1];
   private srcTex: WebGLTexture;
   /** Optional full-resolution crop for the fullscreen viewer. */
   private detailTex: WebGLTexture;
@@ -84,7 +94,8 @@ export class Renderer {
     this.maxTexture = gl.getParameter(gl.MAX_TEXTURE_SIZE);
 
     this.main = this.program(MAIN_FRAG, ['uSrc', 'uLut', 'uHalo', 'uLutSize', 'uOutRect', 'uSrcRect', 'uSrcTexel',
-      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed', 'uEdge', 'uLutSlices', 'uBlend']);
+      'uImageSize', 'uOutSize', 'uFlipY', 'uStrength', 'uSharpen', 'uFilm', 'uFilmMix', 'uFade', 'uAberr', 'uSplit', 'uPrism', 'uFlare', 'uLeak', 'uSeed', 'uEdge', 'uLutSlices', 'uBlend',
+      'uLutGroups', 'uMask', 'uMaskRect', 'uMaskMix']);
     this.bright = this.program(BRIGHT_FRAG, ['uSrc']);
     this.blur = this.program(BLUR_FRAG, ['uSrc', 'uDir']);
 
@@ -98,6 +109,8 @@ export class Renderer {
 
     this.srcTex = this.texture2d();
     this.detailTex = this.texture2d();
+    this.maskTex = this.texture2d();
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, 1, 1, 0, gl.RGBA, gl.UNSIGNED_BYTE, new Uint8Array(4));
     this.haloA = this.target(HALO_SIZE, HALO_SIZE);
     this.haloB = this.target(HALO_SIZE, HALO_SIZE);
   }
@@ -173,7 +186,23 @@ export class Renderer {
     this.lutTex = tex;
     this.lutSize = n;
     this.lutSlices = slices;
+    this.lutGroups = lut.groups;
     this.hasLut = true;
+  }
+
+  /**
+   * Upload the scene mask (null clears it). `rect`: the part of the mask this
+   * renderer's image covers, as mask uv (x0, y0, x1, y1).
+   */
+  setMask(mask: MaskData | null, rect: number[] = [0, 0, 1, 1]) {
+    const gl = this.gl;
+    this.hasMask = !!mask;
+    this.maskRect = rect;
+    if (!mask) return;
+    gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 1);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA8, mask.width, mask.height, 0, gl.RGBA, gl.UNSIGNED_BYTE, mask.data);
+    gl.pixelStorei(gl.UNPACK_ALIGNMENT, 4);
   }
 
   private upload(src: TexImageSource & { width: number; height: number }) {
@@ -236,9 +265,13 @@ export class Renderer {
     gl.activeTexture(gl.TEXTURE0); gl.bindTexture(gl.TEXTURE_2D, useDetail ? this.detailTex : this.srcTex);
     gl.activeTexture(gl.TEXTURE1); gl.bindTexture(gl.TEXTURE_3D, this.lutTex);
     gl.activeTexture(gl.TEXTURE2); gl.bindTexture(gl.TEXTURE_2D, this.haloA.tex);
+    gl.activeTexture(gl.TEXTURE3); gl.bindTexture(gl.TEXTURE_2D, this.maskTex);
     gl.activeTexture(gl.TEXTURE0);
     const l = this.pass(this.main, target, outW, outH);
-    gl.uniform1i(l.uSrc, 0); gl.uniform1i(l.uLut, 1); gl.uniform1i(l.uHalo, 2);
+    gl.uniform1i(l.uSrc, 0); gl.uniform1i(l.uLut, 1); gl.uniform1i(l.uHalo, 2); gl.uniform1i(l.uMask, 3);
+    gl.uniform1f(l.uLutGroups, this.lutGroups);
+    gl.uniform4fv(l.uMaskRect, this.maskRect);
+    gl.uniform1f(l.uMaskMix, this.hasMask ? p.mask : 0);
     gl.uniform1f(l.uLutSize, this.lutSize);
     gl.uniform1f(l.uLutSlices, this.lutSlices);
     gl.uniform4f(l.uBlend, p.blend[0], p.blend[1], p.blend[2], p.blend[3]);

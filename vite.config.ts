@@ -10,9 +10,14 @@ const site = (() => {
   return (url.startsWith('http') ? url : `https://${url}`).replace(/\/$/, '');
 })();
 
+const ISOLATION = { 'Cross-Origin-Opener-Policy': 'same-origin', 'Cross-Origin-Embedder-Policy': 'require-corp' };
+
 export default defineConfig({
   plugins: [svelte(), { name: 'site-url', transformIndexHtml: (html) => html.replaceAll('%SITE%', site) }],
   worker: { format: 'es' },
+  // Cross-origin isolation lets the foliage model run on several threads.
+  server: { headers: ISOLATION },
+  preview: { headers: ISOLATION },
   optimizeDeps: { exclude: ['@jsquash/jpeg'] },
   build: { target: 'es2022' },
 });

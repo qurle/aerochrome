@@ -97,6 +97,22 @@ export function setLooks(look: Look): Look[] {
 }
 const setCache = new WeakMap<Look, Look[]>();
 
+/** Variants per masked set: as designed, masked foliage, masked objects (see LookMode). */
+export const MASK_GROUPS = 3;
+
+/**
+ * Looks for a masked set: three full Tweak sets in a row (normal, foliage,
+ * object), so the shader can blend them per pixel by the scene mask.
+ */
+export function maskedSetLooks(look: Look): Look[] {
+  const cached = maskedCache.get(look);
+  if (cached) return cached;
+  const out = [look, { ...look, mode: 'foliage' as const }, { ...look, mode: 'object' as const }].flatMap(setLooks);
+  maskedCache.set(look, out);
+  return out;
+}
+const maskedCache = new WeakMap<Look, Look[]>();
+
 /** Exact (non-blended) variation, for checking blend accuracy in development. */
 export function tweakLookExact(look: Look, t: number): Look {
   const g: Grade = { ...look.grade, shadowTint: [...look.grade.shadowTint], highlightTint: [...look.grade.highlightTint] };

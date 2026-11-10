@@ -1,7 +1,7 @@
 import { LUT_SIZE } from './lut';
 import type { LutData, LutRequest } from './lut.worker';
 import type { WorkingSpace } from './spaces';
-import { SET_SLICES } from './tweak';
+import { MASK_GROUPS, SET_SLICES } from './tweak';
 
 export type { LutData } from './lut.worker';
 
@@ -23,7 +23,7 @@ export class LutCache {
   private bytes = 0;
   private queue: Job[] = [];
   private jobs = new Map<string, Job>();
-  private sets = new Map<string, Promise<LutData>>();
+  private stacks = new Map<string, Promise<LutData>>();
   private running: Job | null = null;
   private static readonly BUDGET = 48 * 1024 * 1024;
 
@@ -34,8 +34,8 @@ export class LutCache {
         const job = this.running!;
         this.running = null;
         this.jobs.delete(e.data.key);
-        // Variant slices only live until their set is assembled; the base is kept.
-        if (job.req.slice === 0) this.store(e.data.key, e.data.lut);
+        // Variant slices only live until their set is assembled; bases are kept.
+        if (job.req.slice % SET_SLICES === 0) this.store(e.data.key, e.data.lut);
         job.resolve(e.data.lut);
         this.pump();
       };
@@ -87,45 +87,49 @@ export class LutCache {
     return promise;
   }
 
-  /** Cached base LUT, if ready. */
-  peekBase(id: string, space: WorkingSpace, size = LUT_SIZE) {
-    return this.touch(`${id}|${space}|${size}|0`);
+  /** Cached base LUT, if ready. `masked`: with the scene-mask variants (3 cubes). */
+  peekBase(id: string, space: WorkingSpace, size = LUT_SIZE, masked = false) {
+    return this.touch(`${id}|${space}|${size}|${masked ? 'base-m' : 0}`);
   }
 
   /** Cached Tweak set, if ready. */
-  peekSet(id: string, space: WorkingSpace, size = LUT_SIZE) {
-    return this.touch(`${id}|${space}|${size}|set`);
+  peekSet(id: string, space: WorkingSpace, size = LUT_SIZE, masked = false) {
+    return this.touch(`${id}|${space}|${size}|${masked ? 'set-m' : 'set'}`);
   }
 
-  /** The preset's look as designed (one cube). */
-  base(id: string, space: WorkingSpace, priority: Priority, size = LUT_SIZE) {
-    return this.slice(id, space, size, 0, priority);
+  /** The preset's look as designed (one cube; three with the mask variants). */
+  base(id: string, space: WorkingSpace, priority: Priority, size = LUT_SIZE, masked = false) {
+    if (!masked) return this.slice(id, space, size, 0, priority);
+    return this.stack(id, space, size, `${id}|${space}|${size}|base-m`, [0, SET_SLICES, 2 * SET_SLICES], MASK_GROUPS, priority);
   }
 
-  /** Base plus all Tweak variants, stacked for the shader to blend. */
-  set(id: string, space: WorkingSpace, priority: Priority, size = LUT_SIZE): Promise<LutData> {
-    const key = `${id}|${space}|${size}|set`;
+  /** Base plus all Tweak variants (for each mask variant), stacked for the shader to blend. */
+  set(id: string, space: WorkingSpace, priority: Priority, size = LUT_SIZE, masked = false) {
+    const n = masked ? SET_SLICES * MASK_GROUPS : SET_SLICES;
+    return this.stack(id, space, size, `${id}|${space}|${size}|${masked ? 'set-m' : 'set'}`,
+      Array.from({ length: n }, (_, s) => s), masked ? MASK_GROUPS : 1, priority);
+  }
+
+  private stack(id: string, space: WorkingSpace, size: number, key: string, slices: number[], groups: number, priority: Priority): Promise<LutData> {
     const hit = this.touch(key);
     if (hit) return Promise.resolve(hit);
-    const pending = this.sets.get(key);
+    const pending = this.stacks.get(key);
     if (pending) {
       // Promote its slices if this request is more urgent.
-      for (let s = 0; s < SET_SLICES; s++) void this.slice(id, space, size, s, priority);
+      for (const s of slices) void this.slice(id, space, size, s, priority);
       this.pump();
       return pending;
     }
-    const p = Promise.all(
-      Array.from({ length: SET_SLICES }, (_, s) => this.slice(id, space, size, s, priority)),
-    ).then((cubes) => {
+    const p = Promise.all(slices.map((s) => this.slice(id, space, size, s, priority))).then((cubes) => {
       const cube = cubes[0].data.length;
-      const data = new Uint8Array(cube * SET_SLICES);
+      const data = new Uint8Array(cube * slices.length);
       cubes.forEach((c, s) => data.set(c.data, s * cube));
-      const lut: LutData = { data, n: size, slices: SET_SLICES };
-      this.sets.delete(key);
+      const lut: LutData = { data, n: size, slices: slices.length, groups };
+      this.stacks.delete(key);
       this.store(key, lut);
       return lut;
     });
-    this.sets.set(key, p);
+    this.stacks.set(key, p);
     this.pump();
     return p;
   }
