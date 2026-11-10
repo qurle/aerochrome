@@ -76,6 +76,22 @@
   // rotate (current → the side we came from) and only the far side restarts.
   type Side = 'prev' | 'next';
   let curCopy: HTMLCanvasElement | null = null;
+  let fadeCanvas: HTMLCanvasElement;
+
+  // Keyboard preset switches cross-fade (no movement): snapshot the current
+  // frame onto an overlay, let the main view switch underneath, fade it out.
+  function crossfade() {
+    const r = editor.renderer, img = editor.image;
+    if (!r || !img || !fadeCanvas || p !== 0 || reduced()) return;
+    r.render(editor.params(editor.comparing), [img.width, img.height]); // same task: buffer is fresh
+    copyInto(fadeCanvas, canvas);
+    for (const a of fadeCanvas.getAnimations()) a.cancel();
+    fadeCanvas.animate([{ opacity: 1 }, { opacity: 0 }], { duration: 180, easing: 'ease-out', fill: 'forwards' });
+  }
+  onMount(() => {
+    editor.beforeSwitch = crossfade;
+    return () => { if (editor.beforeSwitch === crossfade) editor.beforeSwitch = null; };
+  });
   let curValid = false;
   let frameEl: HTMLDivElement;
   let lv = $state<Record<Side, number>>({ prev: 0, next: 0 });
@@ -314,6 +330,7 @@
         style:opacity={editor.fullscreen ? 1 - editor.fsBg : cur.o}
         style:transition={editor.fullscreen ? editor.fsFade : 'none'}
       ></canvas>
+      <canvas class="fade" bind:this={fadeCanvas} aria-hidden="true" style:width="{fit.w}px" style:height="{fit.h}px"></canvas>
       {#if waiting}
         <img class="dither" src={dither} alt="" aria-hidden="true" />
       {:else if !editor.image}
@@ -357,6 +374,7 @@
   @keyframes reveal { from { opacity: 0; } }
   @media (prefers-reduced-motion: reduce) { canvas.main:not(.hidden) { animation: none; } }
   .main { position: relative; z-index: 1; will-change: transform, opacity; }
+  .fade { position: absolute; left: 0; top: 0; z-index: 1; opacity: 0; pointer-events: none; }
   .neighbour {
     position: absolute;
     left: 0;

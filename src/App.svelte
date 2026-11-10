@@ -79,6 +79,20 @@
     const t = e.target as HTMLElement;
     return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
   }
+  /**
+   * Show a shortcut as a button press: the matching button scales down and
+   * back over 320 ms; on the sample (no such button) the photo does.
+   */
+  function press(label: 'Copy' | 'Export') {
+    if (!editor.image || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const btn = [...document.querySelectorAll<HTMLElement>(`section button[title^="${label}"]`)].find((b) => b.offsetParent);
+    const el = btn ?? document.querySelector<HTMLElement>('section .image');
+    el?.animate(
+      [{ transform: 'scale(1)' }, { transform: `scale(${btn ? 0.92 : 0.97})` }, { transform: 'scale(1)' }],
+      { duration: 320, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+    );
+  }
+
   // Shortcuts match physical keys (KeyboardEvent.code), so they work in any
   // layout: T is the same key on Russian ЙЦУКЕН (Е) as on QWERTY.
   function key(e: KeyboardEvent, down: boolean) {
@@ -90,8 +104,8 @@
     const cmd = e.metaKey || e.ctrlKey;
     const c = e.code;
     if (cmd) {
-      if (c === 'KeyC' && !getSelection()?.toString()) editor.copy();
-      else if (c === 'KeyE' || c === 'KeyS') void (editor.pending ? editor.savePending() : editor.exportJpeg());
+      if (c === 'KeyC' && !getSelection()?.toString()) { press('Copy'); editor.copy(); }
+      else if (c === 'KeyE' || c === 'KeyS') { press('Export'); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
       else if (c === 'KeyO') open();
       else return;
     } else if (c === 'ArrowRight') editor.step(1);
@@ -186,16 +200,18 @@
   }
   const goTo = (i: number) => pager.scrollTo({ left: i * pager.scrollWidth, behavior: 'smooth' });
 
+  /** Busy state as the UI shows it: a copy stays invisible for its first 500 ms. */
+  const shown = $derived(editor.busy?.quiet ? null : editor.busy);
   const exportLabel = $derived.by(() => {
-    const b = editor.busy;
+    const b = shown;
     if (editor.pending) return 'Save';
     if (b?.kind === 'export') return `${Math.round((b.progress ?? 0) * 100)}%`;
     if (b?.kind === 'encode') return 'Saving…';
     return 'Export';
   });
   const copyLabel = $derived(
-    editor.busy?.kind === 'copy' ? `${Math.round((editor.busy.progress ?? 0) * 100)}%` :
-    editor.busy?.kind === 'copied' ? 'Copied' : 'Copy');
+    shown?.kind === 'copy' ? `${Math.round((shown.progress ?? 0) * 100)}%` :
+    shown?.kind === 'copied' ? 'Copied' : 'Copy');
   const exportClick = () => (editor.pending ? editor.savePending() : editor.exportJpeg());
   const noImage = $derived(!editor.image);
 </script>
@@ -244,9 +260,9 @@
             <span class="mobile"><Button onclick={open}>Open</Button></span>
             <span class="spacer"></span>
             <span class="desktop">
-              <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!editor.busy} onclick={() => editor.copy()}>{copyLabel}</Button>
+              <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!shown} onclick={() => editor.copy()}>{copyLabel}</Button>
             </span>
-            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!editor.busy && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
+            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!shown && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
           {/if}
         </div>
       {/snippet}
@@ -397,6 +413,7 @@
     color: var(--muted);
     font: inherit;
     cursor: pointer;
+    border-radius: 10px; /* gives the focus ring a soft shape */
   }
   .help:hover { color: var(--ink); }
 

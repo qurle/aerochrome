@@ -20,7 +20,7 @@
   } = $props();
 
   let track: HTMLDivElement;
-  let dragging = false;
+  let dragging = $state(false);
 
   const clamp = (v: number) => Math.min(1, Math.max(0, v));
   const snap = (v: number) => (steps ? Math.round(clamp(v) * steps) / steps : clamp(v));
@@ -100,7 +100,7 @@
     ondblclick={() => set(defaultValue)}
     onkeydown={key}
   >
-    <div class="fill" style:width="{value * 100}%">
+    <div class="fill" class:glide={!dragging} style:width="{value * 100}%">
       {#if value > 0.04}
         <span class="grip"><i></i><i></i><i></i></span>
       {/if}
@@ -145,6 +145,9 @@
     user-select: none;
   }
   .fill { position: relative; height: 100%; background: var(--c); }
+  /* Changes from shortcuts and preset switches glide; dragging tracks the finger. */
+  .glide { transition: width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
+  @media (prefers-reduced-motion: reduce) { .glide { transition: none; } }
   .grip {
     position: absolute;
     right: 6px;

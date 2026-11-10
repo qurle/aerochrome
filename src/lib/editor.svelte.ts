@@ -30,7 +30,8 @@ class Editor {
   private tweaks: Record<string, number> = loadTweaks();
   /** LUT currently shown: base, or base + Tweak variants (shared with fullscreen). */
   currentLut = $state.raw<LutData | null>(null);
-  busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number }>(null);
+  /** `quiet`: work has started but the UI shouldn't show it yet (fast copies don't flicker). */
+  busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number; quiet?: boolean }>(null);
   error = $state<string | null>(null);
   thumbs = $state.raw<Record<string, ImageBitmap>>({});
   /** Mobile: finished export waiting for a tap on Save (share sheet needs a fresh gesture). */
@@ -293,7 +294,17 @@ class Editor {
   /** Step through presets in display order (keyboard arrows, swipes). */
   step(by: number) {
     const i = ALL_PRESETS.findIndex((p) => p.id === this.presetId);
-    void this.select(ALL_PRESETS[(i + by + ALL_PRESETS.length) % ALL_PRESETS.length].id);
+    this.switchTo(ALL_PRESETS[(i + by + ALL_PRESETS.length) % ALL_PRESETS.length].id);
+  }
+
+  /** Set by the viewer: snapshot the current frame to cross-fade from. */
+  beforeSwitch: (() => void) | null = null;
+
+  /** Keyboard switch: cross-fade from the current frame, land synchronously when cached. */
+  private switchTo(id: string) {
+    if (id === this.presetId) return;
+    this.beforeSwitch?.();
+    this.selectNow(id);
     this.announce();
   }
 
@@ -302,8 +313,7 @@ class Editor {
     const gi = GROUPS.indexOf(groupOf(this.presetId));
     const pi = GROUPS[gi].presets.findIndex((p) => p.id === this.presetId);
     const g = GROUPS[(gi + by + GROUPS.length) % GROUPS.length];
-    void this.select(g.presets[Math.min(pi, g.presets.length - 1)].id);
-    this.announce();
+    this.switchTo(g.presets[Math.min(pi, g.presets.length - 1)].id);
   }
 
   /** The bundled sample is showing (until the user opens their own photo). */
@@ -463,7 +473,9 @@ class Editor {
   copy() {
     if (!this.image || !this.renderer || this.busy) return;
     this.error = null;
-    this.busy = { kind: 'copy', progress: 0 };
+    this.busy = { kind: 'copy', progress: 0, quiet: true };
+    // Only show progress (and disable buttons) if the copy takes a while.
+    const reveal = setTimeout(() => { if (this.busy?.kind === 'copy') this.busy = { ...this.busy, quiet: false }; }, 500);
     const png = (async () => {
       const { pixels, width, height } = await this.renderPixels(COPY_MAX);
       const space = this.renderer!.space;
@@ -475,8 +487,8 @@ class Editor {
     })();
     navigator.clipboard
       .write([new ClipboardItem({ 'image/png': png })])
-      .then(() => { this.busy = { kind: 'copied' }; setTimeout(() => (this.busy = null), 1200); })
-      .catch((e) => { this.busy = null; this.error = `Copy failed: ${(e as Error).message}`; });
+      .then(() => { clearTimeout(reveal); this.busy = { kind: 'copied' }; setTimeout(() => (this.busy = null), 1200); })
+      .catch((e) => { clearTimeout(reveal); this.busy = null; this.error = `Copy failed: ${(e as Error).message}`; });
   }
 }
 
