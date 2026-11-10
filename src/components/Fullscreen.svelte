@@ -217,7 +217,15 @@
 
   // Re-render on any change of transform, settings or LUT.
   $effect(() => {
-    void [s, x, y, vw, vh, lutReady, editor.lutVersion, editor.comparing, editor.strength, editor.sharpen, editor.film, editor.tweak];
+    void [s, x, y, vw, vh, lutReady, editor.lutVersion, editor.comparing, editor.strength, editor.sharpen, editor.film, editor.tweak, editor.maskMix];
+    request();
+  });
+
+  // Same scene mask as the main view (Detect foliage).
+  $effect(() => {
+    const mask = editor.mask;
+    if (!rendererReady || !renderer) return;
+    renderer.setMask(mask);
     request();
   });
 

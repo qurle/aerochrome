@@ -1,12 +1,16 @@
 import sampleUrl from '../assets/sample.webp?url';
+import { LUT_SIZE } from './color/lut';
 import { LutCache, Priority, type LutData } from './color/luts';
+import type { WorkingSpace } from './color/spaces';
 import { TWEAK_NEUTRAL, tweakEffect, tweakWeights } from './color/tweak';
 import { encodeJpeg } from './export/jpeg';
-import { Renderer, type RenderParams } from './gl/renderer';
+import { Renderer, type MaskData, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { drawDitheredDraft } from './image/dither';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
 import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
+import { detectScene } from './seg/detect';
+import { modelCached } from './seg/model';
 
 export const DEFAULTS = { strength: 1, sharpen: 0, film: 0, tweak: TWEAK_NEUTRAL };
 const THUMB_PX = 128;
@@ -14,6 +18,10 @@ const THUMB_PX = 128;
 const THUMB_LUT = 17;
 const COPY_MAX = 4096;
 const JPEG_QUALITY = 96;
+const MASK_FADE_MS = 600;
+
+/** Presets whose looks treat foliage specially (Custom looks colour by their own rules). */
+export const usesFoliage = (id: string) => groupOf(id).id !== 'custom';
 
 class Editor {
   image = $state.raw<LoadedImage | null>(null);
@@ -39,6 +47,30 @@ class Editor {
   renderer: Renderer | null = null;
 
   private luts = new LutCache();
+
+  // --- Detect foliage: a scene mask refines which pixels are plants.
+  /** The switch; remembered for the browser session. */
+  foliage = $state(loadFlag(FOLIAGE_KEY));
+  /** The model still has to be downloaded (shown next to the switch). */
+  foliageDownload = $state(true);
+  /** Download progress (0..1), detection running, or a failure message. */
+  foliageStatus = $state<null | { kind: 'download'; progress: number } | { kind: 'detect' } | { kind: 'error'; message: string }>(null);
+  /** Scene mask of the current photo, once detected. */
+  mask = $state.raw<MaskData | null>(null);
+  /** Masked LUT variants are in use (from the start of the fade-in to the end of the fade-out). */
+  maskOn = $state(false);
+  /** How much the mask applies, animated for the cross-fade. */
+  maskMix = $state(0);
+  private maskAnim = 0;
+
+  /** LUT lookups pick the mask variants while the mask is in use, for presets that use foliage. */
+  private masked = (id: string) => this.maskOn && usesFoliage(id);
+  private lut = {
+    peekBase: (id: string, space: WorkingSpace, size = LUT_SIZE) => this.luts.peekBase(id, space, size, this.masked(id)),
+    peekSet: (id: string, space: WorkingSpace, size = LUT_SIZE) => this.luts.peekSet(id, space, size, this.masked(id)),
+    base: (id: string, space: WorkingSpace, p: Priority, size = LUT_SIZE) => this.luts.base(id, space, p, size, this.masked(id)),
+    set: (id: string, space: WorkingSpace, p: Priority, size = LUT_SIZE) => this.luts.set(id, space, p, size, this.masked(id)),
+  };
   private selectJob = 0;
   private thumbRenderer: Renderer | null = null;
   private thumbJob = 0;
@@ -52,12 +84,12 @@ class Editor {
   /** Render parameters for any preset at a given Tweak (current sliders otherwise). */
   paramsFor(id: string, t: number, original = false): RenderParams {
     const p = findPreset(id);
-    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0, blend: [0, 0, 0, 0] };
+    if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0, blend: [0, 0, 0, 0], mask: 0 };
     const fx = spatial(p), k = this.strength;
     // Tweak also varies effect strengths, and its value lays out the light spots.
     const e = (ch: number) => k * tweakEffect(t, ch);
     return {
-      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: 3.17 + t * 7.31, blend: tweakWeights(t),
+      strength: k, sharpen: this.sharpen, film: this.film, ...fx, seed: 3.17 + t * 7.31, blend: tweakWeights(t), mask: this.maskMix,
       aberration: fx.aberration * e(0), split: [fx.split[0] * e(1), fx.split[1] * e(1)], prism: fx.prism * e(2),
       flare: fx.flare * e(3), leak: [fx.leak[0] * e(4), fx.leak[1], fx.leak[2] * tweakEffect(t, 5)], edge: fx.edge * e(6),
     };
@@ -68,6 +100,7 @@ class Editor {
       try {
         this.renderer = new Renderer(canvas);
         if (this.image) this.renderer.setSource(this.image.preview);
+        this.renderer.setMask(this.mask);
         void this.select(this.presetId);
       } catch (e) {
         this.error = (e as Error).message;
@@ -159,18 +192,18 @@ class Editor {
     if (!r) return;
     const job = ++this.selectJob;
     const id = this.presetId, space = r.space;
-    const ready = this.luts.peekSet(id, space);
+    const ready = this.lut.peekSet(id, space);
     if (ready) this.applyLut(ready);
     else {
-      const base = this.luts.peekBase(id, space) ?? (await this.luts.base(id, space, Priority.Now));
+      const base = this.lut.peekBase(id, space) ?? (await this.lut.base(id, space, Priority.Now));
       if (job !== this.selectJob) return;
       this.applyLut(base);
-      const set = await this.luts.set(id, space, Priority.Now);
+      const set = await this.lut.set(id, space, Priority.Now);
       if (job !== this.selectJob) return;
       this.applyLut(set);
     }
     const i = ALL_PRESETS.findIndex((p) => p.id === id);
-    for (const d of [1, -1]) void this.luts.set(ALL_PRESETS[(i + d + ALL_PRESETS.length) % ALL_PRESETS.length].id, space, Priority.Soon);
+    for (const d of [1, -1]) void this.lut.set(ALL_PRESETS[(i + d + ALL_PRESETS.length) % ALL_PRESETS.length].id, space, Priority.Soon);
   }
 
   /** Previous and next presets in display order (what a swipe goes to). */
@@ -198,8 +231,8 @@ class Editor {
       const t = this.tweakFor(id);
       // Soon, not Now: until these land, the carousel shows a dithered draft.
       return t === TWEAK_NEUTRAL
-        ? this.luts.peekBase(id, r.space) ?? this.luts.base(id, r.space, Priority.Soon)
-        : this.luts.peekSet(id, r.space) ?? this.luts.set(id, r.space, Priority.Soon);
+        ? this.lut.peekBase(id, r.space) ?? this.lut.base(id, r.space, Priority.Soon)
+        : this.lut.peekSet(id, r.space) ?? this.lut.set(id, r.space, Priority.Soon);
     };
     const luts = await Promise.all(sides.map((k) => lutOf(ids[k])));
     // Bail if the photo or preset changed while waiting, or an export is running.
@@ -241,9 +274,9 @@ class Editor {
       const t = targets[k];
       if (!t) continue;
       const id = this.neighbour(k === 'prev' ? -1 : 1), tw = this.tweakFor(id);
-      const lut = tw === TWEAK_NEUTRAL ? this.luts.peekBase(id, r.space, THUMB_LUT) : this.luts.peekSet(id, r.space, THUMB_LUT);
+      const lut = tw === TWEAK_NEUTRAL ? this.lut.peekBase(id, r.space, THUMB_LUT) : this.lut.peekSet(id, r.space, THUMB_LUT);
       if (!lut) {
-        waits.push(tw === TWEAK_NEUTRAL ? this.luts.base(id, r.space, Priority.Now, THUMB_LUT) : this.luts.set(id, r.space, Priority.Now, THUMB_LUT));
+        waits.push(tw === TWEAK_NEUTRAL ? this.lut.base(id, r.space, Priority.Now, THUMB_LUT) : this.lut.set(id, r.space, Priority.Now, THUMB_LUT));
         continue;
       }
       r.setLut(lut);
@@ -270,8 +303,8 @@ class Editor {
     const r = this.renderer, img = this.image;
     const t = this.tweakFor(id);
     const lut = r && (t === TWEAK_NEUTRAL
-      ? this.luts.peekBase(id, r.space) ?? this.luts.peekSet(id, r.space)
-      : this.luts.peekSet(id, r.space));
+      ? this.lut.peekBase(id, r.space) ?? this.lut.peekSet(id, r.space)
+      : this.lut.peekSet(id, r.space));
     this.presetId = id;
     this.tweak = t;
     if (!r || !img || !lut) { void this.loadLut(); return false; }
@@ -350,7 +383,10 @@ class Editor {
       this.image = img;
       this.isSample = sample;
       this.renderer?.setSource(img.preview);
+      // A new photo needs its own mask: show it by colour rules until detected.
+      this.clearMask();
       void this.buildThumbs();
+      if (this.foliage) void this.detect();
     } catch (e) {
       this.error = (e as Error).message;
     }
@@ -370,6 +406,8 @@ class Editor {
     const crop = await createImageBitmap(cropRegion(img.preview,
       (img.preview.width - side) / 2, (img.preview.height - side) / 2, side, side, THUMB_PX * 2, THUMB_PX * 2));
     r.setSource(crop);
+    r.setMask(this.mask, [(img.preview.width - side) / 2 / img.preview.width, (img.preview.height - side) / 2 / img.preview.height,
+      (img.preview.width + side) / 2 / img.preview.width, (img.preview.height + side) / 2 / img.preview.height]);
     this.thumbSide = side;
     // Selected preset first, then the rest.
     const order = [this.presetId, ...ALL_PRESETS.map((p) => p.id).filter((id) => id !== this.presetId)];
@@ -381,8 +419,8 @@ class Editor {
     // switching), then Tweak sets (instant scrubbing). Selections jump ahead.
     if (job === this.thumbJob) {
       const space = this.renderer?.space ?? r.space;
-      for (const p of ALL_PRESETS) void this.luts.base(p.id, space, Priority.Background);
-      for (const p of ALL_PRESETS) void this.luts.set(p.id, space, Priority.Background);
+      for (const p of ALL_PRESETS) void this.lut.base(p.id, space, Priority.Background);
+      for (const p of ALL_PRESETS) void this.lut.set(p.id, space, Priority.Background);
     }
   }
 
@@ -394,14 +432,14 @@ class Editor {
     if (!r || job !== this.thumbJob) return false;
     const preset = findPreset(id), t = this.tweakFor(id);
     const lut = t === TWEAK_NEUTRAL
-      ? await this.luts.base(id, r.space, Priority.Soon, THUMB_LUT)
-      : await this.luts.set(id, r.space, Priority.Soon, THUMB_LUT);
+      ? await this.lut.base(id, r.space, Priority.Soon, THUMB_LUT)
+      : await this.lut.set(id, r.space, Priority.Soon, THUMB_LUT);
     if (job !== this.thumbJob) return false;
     r.setLut(lut);
     const fx = spatial(preset);
     const e = (ch: number) => tweakEffect(t, ch);
     r.render({
-      strength: 1, sharpen: 0, film: 0, ...fx, seed: 3.17 + t * 7.31, blend: tweakWeights(t),
+      strength: 1, sharpen: 0, film: 0, ...fx, seed: 3.17 + t * 7.31, blend: tweakWeights(t), mask: this.maskOn ? 1 : 0,
       aberration: fx.aberration * e(0), split: [fx.split[0] * e(1), fx.split[1] * e(1)], prism: fx.prism * e(2),
       flare: fx.flare * e(3), leak: [fx.leak[0] * e(4), fx.leak[1], fx.leak[2] * e(5)], edge: fx.edge * e(6),
     }, [this.thumbSide, this.thumbSide]);
@@ -409,6 +447,85 @@ class Editor {
     this.thumbs[id]?.close();
     this.thumbs = { ...this.thumbs, [id]: bmp };
     return true;
+  }
+
+  /** Detect foliage switch. */
+  setFoliage(on: boolean) {
+    if (on === this.foliage) return;
+    this.foliage = on;
+    saveFlag(FOLIAGE_KEY, on);
+    if (on) void this.detect();
+    else { this.foliageStatus = null; this.fadeMask(0); }
+  }
+
+  /** Whether the model is already on this device (no download note needed). */
+  async checkModel() {
+    this.foliageDownload = !(await modelCached());
+  }
+
+  /** Segment the current photo (downloading the model first if needed), then fade the mask in. */
+  private async detect() {
+    const img = this.image;
+    if (!img) return;
+    if (this.mask) { void this.showMask(); return; }
+    this.foliageStatus = this.foliageDownload ? { kind: 'download', progress: 0 } : { kind: 'detect' };
+    try {
+      const mask = await detectScene(img.preview, (f) => {
+        if (this.foliage && img === this.image) this.foliageStatus = f < 1 ? { kind: 'download', progress: f } : { kind: 'detect' };
+      });
+      this.foliageDownload = false;
+      if (img !== this.image) return; // another photo arrived: it runs its own detection
+      this.foliageStatus = null;
+      this.mask = mask;
+      this.renderer?.setMask(mask);
+      if (this.foliage) void this.showMask();
+    } catch (e) {
+      if (img !== this.image) return;
+      this.foliageStatus = { kind: 'error', message: (e as Error).message };
+    }
+  }
+
+  /** Switch to the masked LUT variants (identical at mix 0), then cross-fade the mask in. */
+  private async showMask() {
+    const r = this.renderer, id = this.presetId;
+    if (!r || !this.mask || this.maskOn) { this.fadeMask(1); return; }
+    this.maskOn = true;
+    // Wait for what the current view needs, so nothing flickers while switching.
+    if (this.masked(id)) {
+      const lut = this.tweak === TWEAK_NEUTRAL ? await this.lut.base(id, r.space, Priority.Now) : await this.lut.set(id, r.space, Priority.Now);
+      if (!this.maskOn || id !== this.presetId || r !== this.renderer) return;
+      this.applyLut(lut);
+    }
+    this.fadeMask(1);
+    void this.loadLut();
+    void this.buildThumbs();
+  }
+
+  private clearMask() {
+    cancelAnimationFrame(this.maskAnim);
+    this.mask = null;
+    this.maskMix = 0;
+    this.renderer?.setMask(null);
+    if (this.maskOn) { this.maskOn = false; void this.loadLut(); }
+    if (this.foliageStatus?.kind !== 'download') this.foliageStatus = null;
+  }
+
+  /** Animate the mask's strength; at 0 the plain LUTs come back. */
+  private fadeMask(to: 0 | 1) {
+    cancelAnimationFrame(this.maskAnim);
+    const from = this.maskMix, start = performance.now();
+    const reduce = matchMedia('(prefers-reduced-motion: reduce)').matches;
+    const step = (now: number) => {
+      const t = reduce ? 1 : Math.min(1, (now - start) / MASK_FADE_MS);
+      this.maskMix = from + (to - from) * (t < 0.5 ? 2 * t * t : 1 - 2 * (1 - t) * (1 - t));
+      if (t < 1) { this.maskAnim = requestAnimationFrame(step); return; }
+      if (to === 0 && this.maskOn) {
+        this.maskOn = false;
+        void this.loadLut();
+        void this.buildThumbs();
+      }
+    };
+    this.maskAnim = requestAnimationFrame(step);
   }
 
   /** Full pipeline at (up to) `maxSide`, returns RGBA pixels in the working space. */
@@ -419,8 +536,8 @@ class Editor {
     const W = Math.round(img.width * scale), H = Math.round(img.height * scale);
     // Export with the full Tweak set (or base at 50), even if it's still baking.
     r.setLut(this.tweak === TWEAK_NEUTRAL
-      ? await this.luts.base(this.presetId, r.space, Priority.Now)
-      : await this.luts.set(this.presetId, r.space, Priority.Now));
+      ? await this.lut.base(this.presetId, r.space, Priority.Now)
+      : await this.lut.set(this.presetId, r.space, Priority.Now));
     const full = await decodeFull(img.file);
     try {
       const pixels = await r.renderFull(this.params(), [W, H],
@@ -506,6 +623,15 @@ function spatial(p: Preset) {
 }
 
 const TWEAKS_KEY = 'aerochrome:tweaks';
+const FOLIAGE_KEY = 'aerochrome:foliage';
+
+function loadFlag(key: string) {
+  try { return sessionStorage.getItem(key) === '1'; } catch { return false; }
+}
+
+function saveFlag(key: string, on: boolean) {
+  try { sessionStorage.setItem(key, on ? '1' : '0'); } catch { /* storage unavailable: keep in memory only */ }
+}
 
 function loadTweaks(): Record<string, number> {
   try {

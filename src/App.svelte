@@ -4,9 +4,21 @@
   import Help from './components/Help.svelte';
   import Slider from './components/Slider.svelte';
   import Thumb from './components/Thumb.svelte';
+  import Toggle from './components/Toggle.svelte';
   import Viewer from './components/Viewer.svelte';
-  import { DEFAULTS, editor } from './lib/editor.svelte';
+  import { slide } from 'svelte/transition';
+  import { DEFAULTS, editor, usesFoliage } from './lib/editor.svelte';
   import { GROUPS, groupOf } from './lib/presets';
+  import { MODEL_MB } from './lib/seg/model';
+
+  void editor.checkModel();
+  const foliageNote = $derived.by(() => {
+    const st = editor.foliageStatus;
+    if (st?.kind === 'download') return `Downloading ${Math.round(st.progress * 100)}%`;
+    if (st?.kind === 'detect') return 'Detecting…';
+    if (st?.kind === 'error') return 'Failed';
+    return editor.foliageDownload && !editor.foliage ? `${MODEL_MB} MB` : '';
+  });
 
   let input: HTMLInputElement;
   let dragging = $state(false);
@@ -336,6 +348,20 @@
         <Slider label="Strength" color="var(--coral)" bind:value={editor.strength} defaultValue={DEFAULTS.strength} />
         <Slider label="Sharpen" color="var(--ink)" bind:value={editor.sharpen} defaultValue={DEFAULTS.sharpen} />
         <Slider label="Filmness" color="var(--steel)" bind:value={editor.film} defaultValue={DEFAULTS.film} />
+        {#if usesFoliage(editor.presetId)}
+          <div class="foliage" transition:slide={{ duration: 220 }}>
+            <Toggle
+              label="Detect foliage"
+              color="var(--accent)"
+              checked={editor.foliage}
+              note={foliageNote}
+              busy={editor.foliageStatus?.kind === 'detect' || editor.foliageStatus?.kind === 'download'}
+              error={editor.foliageStatus?.kind === 'error'}
+              title={editor.foliageStatus?.kind === 'error' ? editor.foliageStatus.message : 'Find plants with an on-device model, so distant and hazy foliage colours too'}
+              onchange={(on) => editor.setFoliage(on)}
+            />
+          </div>
+        {/if}
       </div>
     </div>
     <div class="dots mobile" role="tablist">

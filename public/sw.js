@@ -19,6 +19,8 @@ self.addEventListener('fetch', (e) => {
   const req = e.request;
   const url = new URL(req.url);
   if (req.method !== 'GET' || url.origin !== location.origin) return;
+  // The foliage model keeps its own cache (see src/lib/seg); don't store it twice.
+  if (url.pathname.startsWith('/models/')) return;
 
   if (url.pathname.startsWith('/assets/')) {
     e.respondWith(

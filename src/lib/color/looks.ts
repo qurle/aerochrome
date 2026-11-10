@@ -71,7 +71,14 @@ export interface Look {
    * Must be a pure function of its inputs (it is baked into a LUT).
    */
   custom?: (out: LCh, src: LCh) => LCh;
+  /**
+   * Variant used where the scene mask (Detect foliage) has a say: `foliage` for
+   * vegetation and forested terrain, `object` for things that are never plants.
+   */
+  mode?: LookMode;
 }
+
+export type LookMode = 'foliage' | 'object';
 
 const NEUTRAL: Grade = {
   foliageHue: NaN, foliageSpread: 0.3, foliageChroma: 1, foliageChromaMin: 0, foliageLift: 0,
@@ -104,26 +111,57 @@ const cyanWeight = (c: LCh) => hueBand(c.h, 190, 218, 10) * smoothstep(0.015, 0.
  */
 const skyDepthWeight = (c: LCh) =>
   mix(1, smoothstep(0.02, 0.12, c.C), smoothstep(0.6, 0.8, c.L));
+/**
+ * Vegetation weight where the scene mask says "plants": any hue a leaf can take
+ * in a photo, hazy blue-grey included, except skin-warm tones, saturated sky
+ * seen through the canopy and near-greys (rock, snow, cloud).
+ */
+function maskedFoliageWeight(c: LCh) {
+  const sky = hueBand(c.h, 225, 275, 12) * smoothstep(0.075, 0.11, c.C);
+  const plant = hueBand(c.h, 85, 245, 14) * (1 - sky) * smoothstep(0.012, 0.035, c.C) * smoothstep(0.04, 0.14, c.L);
+  return Math.max(foliageWeight(c), plant);
+}
+/** Distant foliage reads blue-grey through haze. */
+const hazeWeight = (c: LCh) => hueBand(c.h, 182, 250, 14) * (1 - smoothstep(0.07, 0.11, c.C));
+/** Closest hue inside [lo, hi] (degrees, lo < hi). */
+const clampHue = (h: number, lo: number, hi: number) =>
+  h >= lo && h <= hi ? h : Math.abs(hueDelta(h, lo)) < Math.abs(hueDelta(h, hi)) ? lo : hi;
+
 const skinWeight = (c: LCh) => hueBand(c.h, 28, 68, 14) * smoothstep(0.02, 0.05, c.C) * (1 - smoothstep(0.16, 0.22, c.C));
 
-function applyGrade(space: Space, lin: Vec3, g: Grade): LCh {
+function applyGrade(space: Space, lin: Vec3, g: Grade, mode?: LookMode): LCh {
   const c = labToLch(space.toOklab(lin));
   let { L, C, h } = c;
 
-  const wf = foliageWeight(c);
-  const ws = skyWeight(c);
+  const byColour = foliageWeight(c);
+  const wf = mode === 'foliage' ? maskedFoliageWeight(c) : mode === 'object' ? 0 : byColour;
+  const ws = skyWeight(c) * (1 - wf);
   const wc = cyanWeight(c) * (1 - wf);
   const wk = skinWeight(c);
   const wo = Math.max(0, 1 - wf - ws - wc);
+  const infrared = !Number.isNaN(g.foliageHue);
 
   // Vegetation: rotate towards the target hue, keep some of the original spread.
   if (wf > 0) {
-    if (!Number.isNaN(g.foliageHue)) {
-      const target = g.foliageHue + hueDelta(125, h) * g.foliageSpread;
-      h = h + hueDelta(h, target) * wf;
-    }
+    // Masked foliage of any hue is placed as if it were the nearest leaf green.
+    const leaf = mode === 'foliage' ? clampHue(h, 95, 165) : h;
+    const target = infrared ? g.foliageHue + hueDelta(125, leaf) * g.foliageSpread : leaf;
+    h = h + hueDelta(h, target) * wf;
     C = mix(C, Math.max(C * g.foliageChroma, g.foliageChromaMin), wf);
     L = L + g.foliageLift * wf * (1 - L) * smoothstep(0.08, 0.4, c.L);
+    // Aerial perspective: hazy, distant foliage drifts towards the sky's colour
+    // and loses some saturation (on Aerochrome, red towards deep blue: magenta).
+    const haze = mode === 'foliage' ? hazeWeight(c) * wf : 0;
+    if (haze > 0) {
+      h = h + hueDelta(h, g.skyHue) * haze * 0.35;
+      C *= 1 - 0.4 * haze;
+    }
+  }
+  // Greens that aren't plants (paint, plastic, fabric) reflect little infrared:
+  // on film they go blue rather than red.
+  if (mode === 'object' && infrared && byColour > 0) {
+    h = h + hueDelta(h, g.skyHue) * byColour * 0.55;
+    C *= 1 - 0.25 * byColour;
   }
   if (ws > 0) {
     h = h + hueDelta(h, g.skyHue) * ws * g.skyHueAmount;
@@ -169,11 +207,12 @@ function applyMap(c: LCh, m: GradientMap, cache: Map<GradientMap, (t: number) =>
  * Approximate the film's false-colour shift on a visible-light photo:
  * NIR → R, R → G, G → B. NIR is guessed per colour, since phones don't record it.
  */
-function applyFilm(space: Space, lin: Vec3, f: FilmShift): Vec3 {
+function applyFilm(space: Space, lin: Vec3, f: FilmShift, mode?: LookMode): Vec3 {
   const [r, g, b] = lin;
   const c = labToLch(space.toOklab(lin));
   const Y = 0.2126 * r + 0.7152 * g + 0.0722 * b;
-  const veg = foliageWeight(c);
+  // Non-plant greens get no infrared kick, so the channel shift turns them blue.
+  const veg = mode === 'foliage' ? maskedFoliageWeight(c) : mode === 'object' ? 0 : foliageWeight(c);
   const blue = skyWeight(c) + cyanWeight(c) * 0.5;
   const warm = Math.max(0, r - g);
   let nir = Math.max(Y, r) + f.warmNir * warm;
@@ -185,8 +224,10 @@ function applyFilm(space: Space, lin: Vec3, f: FilmShift): Vec3 {
 const mapCache = new Map<GradientMap, (t: number) => Vec3>();
 
 export function evalLook(space: Space, look: Look, lin: Vec3): Vec3 {
-  const shifted = look.film ? applyFilm(space, lin, look.film) : lin;
-  let out = applyGrade(space, shifted, look.grade);
+  // With a film shift the mask acts on the infrared guess; the grade after it
+  // sees false colours, so it runs as usual.
+  const shifted = look.film ? applyFilm(space, lin, look.film, look.mode) : lin;
+  let out = applyGrade(space, shifted, look.grade, look.film ? undefined : look.mode);
   if (look.map) out = applyMap(out, look.map, mapCache);
   if (look.custom) out = look.custom(out, labToLch(space.toOklab(lin)));
   return lchToLinearInGamut(space, out);
