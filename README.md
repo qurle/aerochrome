@@ -2,6 +2,8 @@
 
 Infrared-style colour looks for photos, entirely in the browser. Nothing is uploaded.
 
+![Aerochrome](public/og.jpg)
+
 ## How it works
 
 Phone cameras don't record infrared, so the looks are colour transforms rather than a real
