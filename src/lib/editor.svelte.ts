@@ -43,6 +43,12 @@ class Editor {
   busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number; quiet?: boolean }>(null);
   error = $state<string | null>(null);
   thumbs = $state.raw<Record<string, ImageBitmap>>({});
+  /**
+   * iOS: finished export waiting for a tap on Save. Downloads there land in
+   * Files, not Photos; the share sheet ("Save Image") reaches Photos, but needs
+   * a fresh tap, and an export takes longer than iOS keeps the first one.
+   */
+  pending = $state<File | null>(null);
   renderer: Renderer | null = null;
 
   private luts = new LutCache();
@@ -374,6 +380,7 @@ class Editor {
   async open(file: File, sample = false) {
     if (!sample) { this.userOpened = true; this.samplePending = false; }
     this.error = null;
+    this.pending = null;
     try {
       const img = await loadImage(file);
       if (sample && this.userOpened) { img.preview.close(); return; } // user won the race
@@ -578,11 +585,24 @@ class Editor {
       const blob = await encodeJpeg({ pixels, width, height, quality: JPEG_QUALITY, p3: this.renderer.space === 'display-p3' });
       const file = new File([blob], this.fileName(), { type: 'image/jpeg' });
       if (scaled) this.error = `Exported at ${width}×${height}: the original is too large for this device's memory.`;
-      download(file);
+      if (isIOS() && navigator.canShare?.({ files: [file] })) this.pending = file;
+      else download(file);
     } catch (e) {
       this.error = `Export failed: ${(e as Error).message}`;
     } finally {
       this.busy = null;
+    }
+  }
+
+  /** iOS: open the share sheet for the finished export (call from a tap). */
+  async savePending() {
+    const file = this.pending;
+    if (!file) return;
+    try {
+      await navigator.share({ files: [file] });
+      this.pending = null;
+    } catch (e) {
+      if ((e as Error).name !== 'AbortError') { download(file); this.pending = null; }
     }
   }
 
@@ -654,6 +674,11 @@ function saveTweaks(t: Record<string, number>) {
   try {
     sessionStorage.setItem(TWEAKS_KEY, JSON.stringify(t));
   } catch { /* storage unavailable (private mode): keep in memory only */ }
+}
+
+/** iPhone and iPad (iPadOS reports itself as a Mac, but with touch). */
+function isIOS() {
+  return /iPhone|iPad|iPod/.test(navigator.userAgent) || (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1);
 }
 
 function download(file: File) {

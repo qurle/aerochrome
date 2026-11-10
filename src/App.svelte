@@ -127,7 +127,7 @@
     if (cmd && e.shiftKey) return;
     if (cmd) {
       if (c === 'KeyC' && !getSelection()?.toString()) { if (editor.copy()) press(); }
-      else if (c === 'KeyE' || c === 'KeyS') { if (editor.exportJpeg()) press(); }
+      else if (c === 'KeyE' || c === 'KeyS') { if (editor.pending) void editor.savePending(); else if (editor.exportJpeg()) press(); }
       else if (c === 'KeyO') open();
       else return;
     } else if (c === 'ArrowRight') editor.step(1);
@@ -225,6 +225,7 @@
   const shown = $derived(editor.busy?.quiet ? null : editor.busy);
   const exportLabel = $derived.by(() => {
     const b = shown;
+    if (editor.pending) return 'Save';
     if (b?.kind === 'export') return `${Math.round((b.progress ?? 0) * 100)}%`;
     if (b?.kind === 'encode') return 'Saving…';
     return 'Export';
@@ -278,7 +279,7 @@
             <span class="desktop">
               <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!shown} onclick={() => editor.copy()}>{copyLabel}</Button>
             </span>
-            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || !!shown} onclick={() => editor.exportJpeg()}>{exportLabel}</Button>
+            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!shown && !editor.pending)} onclick={() => (editor.pending ? editor.savePending() : editor.exportJpeg())}>{exportLabel}</Button>
           {/if}
         </div>
       {/snippet}
