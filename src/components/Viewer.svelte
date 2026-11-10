@@ -69,7 +69,7 @@
     return { x: Math.sign(p) * -1 * (1 - k) * fit.w * IN_FROM, s: IN_SCALE + (1 - IN_SCALE) * k, o: ease(0, 0.55, k) };
   });
 
-  // Neighbour buffers, each at a level: 0 = grey skeleton, 1 = dithered
+  // Neighbour buffers, each at a level: 0 = plain grey, 1 = dithered
   // low-res draft in the preset's colours, 2 = full render. The incoming layer
   // always animates with whatever level it has, so a swipe never waits.
   // `curCopy` holds the current frame, so when a swipe lands the buffers
@@ -290,7 +290,6 @@
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
-        class:skeleton={lv.prev === 0}
         class:draft={lv.prev === 1}
         style:opacity={p > 0 ? inc.o : 0}
       ></canvas>
@@ -301,7 +300,6 @@
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
-        class:skeleton={lv.next === 0}
         class:draft={lv.next === 1}
         style:opacity={p < 0 ? inc.o : 0}
       ></canvas>
@@ -366,11 +364,8 @@
     pointer-events: none;
     will-change: transform, opacity;
   }
-  /* Not rendered yet: a grey skeleton, pulsing like the thumbnail placeholders. */
-  .neighbour.skeleton { background: var(--placeholder); animation: skeleton 1.2s ease-in-out infinite alternate; }
-  /* Pulses the colour, not opacity: opacity belongs to the swipe. */
-  @keyframes skeleton { to { background: #efedee; } }
-  @media (prefers-reduced-motion: reduce) { .neighbour.skeleton { animation: none; } }
+  /* A static grey ground; the dithered draft and then the full render land on it. */
+  .neighbour { background: var(--placeholder); }
   .neighbour.draft { image-rendering: pixelated; }
   .dither {
     position: absolute;
