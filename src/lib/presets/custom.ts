@@ -2,29 +2,21 @@ import { grade, type LCh } from '../color/looks';
 import { clamp01, mix, smoothstep } from '../color/spaces';
 import { filmDefault, type Group } from './types';
 
-/** Soft posterisation into n bands; `edge` 0 = hard steps, 0.5 = no steps. */
-const softSteps = (x: number, n: number, edge: number) => {
-  const y = x * n;
-  const i = Math.floor(y), f = y - i;
-  return clamp01((i + smoothstep(0.5 - edge, 0.5 + edge, f)) / n);
-};
-
 /** 0..1 bump that keeps chroma down near black and white. */
 const body = (L: number) => Math.sin(Math.PI * clamp01(L));
 
 /**
  * TV Girl: a two-ink poster. Warm things (skin, reds, yellows) go pink, cool and
  * green things go blue; greys split by lightness (navy shadows, pink highlights).
- * Lightness is softly posterised and chroma flattened for a screen-printed feel.
+ * Chroma is flattened for a screen-printed feel; tones stay continuous.
  */
 const BLUE = 262, PINK = 352;
 const tvGirl = (out: LCh, src: LCh): LCh => {
   const warm = smoothstep(-0.1, 0.35, Math.cos(((src.h - 25) * Math.PI) / 180));
   const chromatic = smoothstep(0.02, 0.07, src.C);
-  const L0 = softSteps(out.L, 5, 0.3);
-  const byL = smoothstep(0.3, 0.8, L0);
+  const byL = smoothstep(0.3, 0.8, out.L);
   const p = smoothstep(0.2, 0.8, clamp01(mix(byL, warm * 0.85 + byL * 0.3, chromatic)));
-  const L = mix(0.17, 0.98, L0);
+  const L = mix(0.17, 0.98, out.L);
   const C = mix(0.1, 0.19, chromatic) * (0.3 + 0.7 * body(0.08 + L * 0.9));
   return { L, C, h: BLUE + (PINK - BLUE) * p };
 };
