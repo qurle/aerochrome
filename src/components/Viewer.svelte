@@ -2,6 +2,7 @@
   import type { Snippet } from 'svelte';
   import { onMount } from 'svelte';
   import { editor } from '../lib/editor.svelte';
+  import dither from '../assets/sample-dither.png?inline';
 
   let { top, bottom, onopen }: { top?: Snippet; bottom?: Snippet; onopen: () => void } = $props();
 
@@ -12,7 +13,9 @@
   let bottomH = $state(0);
   const rowsH = $derived((top ? topH + 16 : 0) + (bottom ? bottomH + 16 : 0));
 
-  const aspect = $derived(editor.image ? editor.image.width / editor.image.height : 4 / 3);
+  const waiting = $derived(!editor.image && editor.samplePending);
+  // The placeholder has the sample's 3:4 shape, so nothing moves when it arrives.
+  const aspect = $derived(editor.image ? editor.image.width / editor.image.height : waiting ? 3 / 4 : 4 / 3);
   const fit = $derived.by(() => {
     const h = Math.max(120, avail.h - rowsH);
     const w = Math.max(120, Math.min(avail.w, h * aspect));
@@ -105,7 +108,7 @@
 <div class="box" bind:this={box}>
   <div class="frame" style:width="{fit.w}px">
     {#if top}<div class="row" bind:clientHeight={topH}>{@render top()}</div>{/if}
-    <div class="image" class:placeholder={!editor.image} style:width="{fit.w}px" style:height="{fit.h}px">
+    <div class="image" class:placeholder={!editor.image && !waiting} style:width="{fit.w}px" style:height="{fit.h}px">
       <canvas
         bind:this={canvas}
         class:hidden={!editor.image}
@@ -121,7 +124,9 @@
         onpointercancel={() => { start = null; if (swiping) { swiping = false; void go({ x: 0, op: 1 }, 220); } }}
         oncontextmenu={(e) => e.preventDefault()}
       ></canvas>
-      {#if !editor.image}
+      {#if waiting}
+        <img class="dither" src={dither} alt="" aria-hidden="true" />
+      {:else if !editor.image}
         <button class="empty" onclick={onopen}>
           <span>Drop a photo here</span>
           <span class="muted">or tap Open. It never leaves your device.</span>
@@ -129,7 +134,7 @@
       {/if}
       {#if editor.comparing}<span class="badge">Original</span>
       {:else if editor.flash}<span class="badge">{editor.flash}</span>
-      {:else if editor.isSample}<span class="badge sample">Sample</span>{/if}
+      {:else if editor.isSample || waiting}<span class="badge sample">Sample</span>{/if}
     </div>
     {#if bottom}<div class="row" bind:clientHeight={bottomH}>{@render bottom()}</div>{/if}
   </div>
@@ -157,6 +162,20 @@
     -webkit-touch-callout: none;
   }
   .hidden { display: none; }
+  /* The real photo fades in over where the dithered placeholder was. */
+  canvas:not(.hidden) { animation: reveal 0.45s ease-out; }
+  @keyframes reveal { from { opacity: 0; } }
+  @media (prefers-reduced-motion: reduce) { canvas:not(.hidden) { animation: none; } }
+  .dither {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    image-rendering: pixelated;
+    animation: breathe 1.6s ease-in-out infinite alternate;
+  }
+  @keyframes breathe { to { opacity: 0.75; } }
+  @media (prefers-reduced-motion: reduce) { .dither { animation: none; } }
   .empty {
     position: absolute;
     inset: 0;
