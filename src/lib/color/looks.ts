@@ -91,11 +91,19 @@ const sCurve = (x: number, k: number) => {
 };
 
 /** Vegetation likelihood from colour alone (no masks). */
+// The band reaches into teal (~170°) for hazy, distant forest; cyan starts above it.
 export function foliageWeight(c: LCh) {
-  return hueBand(c.h, 100, 150, 24) * smoothstep(0.012, 0.045, c.C) * smoothstep(0.05, 0.16, c.L);
+  return hueBand(c.h, 100, 165, 22) * smoothstep(0.012, 0.045, c.C) * smoothstep(0.04, 0.14, c.L);
 }
 const skyWeight = (c: LCh) => hueBand(c.h, 222, 268, 18) * smoothstep(0.01, 0.04, c.C);
-const cyanWeight = (c: LCh) => hueBand(c.h, 175, 215, 12) * smoothstep(0.015, 0.05, c.C);
+const cyanWeight = (c: LCh) => hueBand(c.h, 190, 218, 10) * smoothstep(0.015, 0.05, c.C);
+/**
+ * How much of the sky darkening applies. Bright, faintly blue pixels (cloud edges)
+ * ease in over a wide chroma range; otherwise a small chroma change across a cloud
+ * flips it from untouched to fully darkened, which draws hard edges.
+ */
+const skyDepthWeight = (c: LCh) =>
+  mix(1, smoothstep(0.02, 0.12, c.C), smoothstep(0.6, 0.8, c.L));
 const skinWeight = (c: LCh) => hueBand(c.h, 28, 68, 14) * smoothstep(0.02, 0.05, c.C) * (1 - smoothstep(0.16, 0.22, c.C));
 
 function applyGrade(space: Space, lin: Vec3, g: Grade): LCh {
@@ -104,7 +112,7 @@ function applyGrade(space: Space, lin: Vec3, g: Grade): LCh {
 
   const wf = foliageWeight(c);
   const ws = skyWeight(c);
-  const wc = cyanWeight(c);
+  const wc = cyanWeight(c) * (1 - wf);
   const wk = skinWeight(c);
   const wo = Math.max(0, 1 - wf - ws - wc);
 
@@ -120,7 +128,7 @@ function applyGrade(space: Space, lin: Vec3, g: Grade): LCh {
   if (ws > 0) {
     h = h + hueDelta(h, g.skyHue) * ws * g.skyHueAmount;
     C = mix(C, C * g.skyChroma, ws);
-    L = L * (1 - g.skyDepth * ws * 0.45);
+    L = L * (1 - g.skyDepth * ws * skyDepthWeight(c) * 0.45);
   }
   if (wc > 0) h = h + hueDelta(h, g.cyanHue) * wc * g.cyanAmount;
   if (wk > 0 && g.skinPale > 0) {
