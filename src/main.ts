@@ -25,6 +25,11 @@ if (hasSavedPhoto()) startSample();
 else if (document.readyState === 'complete') (idle ? idle(startSample, { timeout: 500 }) : setTimeout(startSample, 0));
 else window.addEventListener('load', () => (idle ? idle(startSample, { timeout: 500 }) : setTimeout(startSample, 0)), { once: true });
 
+// Leaving the page (reload, close, app switch): keep the frame on screen as the
+// next reload's placeholder, even if edits haven't settled yet.
+window.addEventListener('pagehide', () => editor.capturePlaceholder());
+document.addEventListener('visibilitychange', () => { if (document.visibilityState === 'hidden') editor.capturePlaceholder(); });
+
 if (import.meta.env.PROD && 'serviceWorker' in navigator) {
   window.addEventListener('load', () => navigator.serviceWorker.register('/sw.js'));
 }
