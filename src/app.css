@@ -34,6 +34,9 @@ button { font: inherit; color: inherit; }
    which showed as a grey flick. */
 button, input, a, [role='slider'], [tabindex], :focus { outline: 2px solid transparent; outline-offset: 0; }
 :focus-visible { outline-color: var(--accent); outline-offset: 2px; }
+/* Inputs are focus-visible on click too; ring them only after Tab navigation. */
+input:focus-visible { outline-color: transparent; outline-offset: 0; }
+html[data-nav='keyboard'] input:focus-visible { outline-color: var(--accent); outline-offset: 2px; }
 button, input, a, [role='slider'] {
   transition: outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
 }

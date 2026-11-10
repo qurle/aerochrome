@@ -5,6 +5,13 @@ import { editor } from './lib/editor.svelte';
 
 mount(App, { target: document.getElementById('app')! });
 
+// Text inputs match :focus-visible even when clicked, so track how focus
+// arrived: Tab means keyboard navigation, a pointer press means not.
+// Typing doesn't switch modes, so editing a clicked field stays ring-free.
+const root = document.documentElement;
+document.addEventListener('keydown', (e) => { if (e.key === 'Tab') root.dataset.nav = 'keyboard'; }, true);
+document.addEventListener('pointerdown', () => { root.dataset.nav = 'pointer'; }, true);
+
 // iOS Safari only applies :active (pressed styles) when a touchstart listener exists.
 document.addEventListener('touchstart', () => {}, { passive: true });
 
