@@ -187,19 +187,22 @@ class Editor {
     targets: { prev?: HTMLCanvasElement; next?: HTMLCanvasElement; cur?: HTMLCanvasElement },
     w: number, h: number, guard: () => boolean = () => true,
   ) {
-    const r = this.renderer, img = this.image, cur = this.currentLut, presetId = this.presetId;
-    if (!r || !img || !cur) return false;
+    const r = this.renderer, img = this.image, presetId = this.presetId;
+    if (!r || !img || !this.currentLut) return false;
     const sides = (['prev', 'next'] as const).filter((k) => targets[k]);
     const ids = { prev: this.neighbour(-1), next: this.neighbour(1) };
     const lutOf = async (id: string) => {
       const t = this.tweakFor(id);
+      // Now: the next swipe needs these, ahead of thumbnails and warm-up work.
       return t === TWEAK_NEUTRAL
-        ? this.luts.peekBase(id, r.space) ?? this.luts.base(id, r.space, Priority.Soon)
-        : this.luts.peekSet(id, r.space) ?? this.luts.set(id, r.space, Priority.Soon);
+        ? this.luts.peekBase(id, r.space) ?? this.luts.base(id, r.space, Priority.Now)
+        : this.luts.peekSet(id, r.space) ?? this.luts.set(id, r.space, Priority.Now);
     };
     const luts = await Promise.all(sides.map((k) => lutOf(ids[k])));
-    // Bail if anything changed while waiting, or a render is mid-flight elsewhere.
-    if (r !== this.renderer || img !== this.image || cur !== this.currentLut || presetId !== this.presetId || this.busy || !guard()) return false;
+    // Bail if the photo or preset changed while waiting, or an export is running.
+    // (The current LUT may have been upgraded meanwhile: restore whichever is live.)
+    const cur = this.currentLut;
+    if (r !== this.renderer || img !== this.image || !cur || presetId !== this.presetId || this.busy || !guard()) return false;
     const c = r.canvas as HTMLCanvasElement;
     if (c.width !== w || c.height !== h) return false;
     const copy = (t: HTMLCanvasElement) => {

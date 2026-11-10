@@ -73,6 +73,7 @@
   // lands the buffers rotate (current → the side we came from, incoming →
   // current) and only the far side needs a fresh render.
   let curCopy: HTMLCanvasElement | null = null;
+  let late = $state(false);
   let frameEl: HTMLDivElement;
   let ready = $state({ prev: false, next: false });
   let readyKey = '';
@@ -83,18 +84,24 @@
       editor.strength, editor.sharpen, editor.film, editor.tweak, canvas.width, canvas.height].join('|') : '';
   }
 
+  // Safe at any time, even mid-swipe: the neighbour renders happen within one
+  // task and the main canvas is restored before anything is composited.
   let preparing = false;
   async function prepareNeighbours() {
-    if (preparing || swiping || anim || !editor.image) return;
+    if (preparing || !editor.image) return;
     const key = stateKey();
     if (key !== readyKey) { ready = { prev: false, next: false }; readyKey = key; }
     if (ready.prev && ready.next) return;
     curCopy ??= document.createElement('canvas');
     preparing = true;
     const want = { prev: !ready.prev ? prevCanvas : undefined, next: !ready.next ? nextCanvas : undefined, cur: curCopy };
-    const ok = await editor.renderNeighbours(want, canvas.width, canvas.height, () => !swiping && !anim && stateKey() === key);
+    const ok = await editor.renderNeighbours(want, canvas.width, canvas.height, () => stateKey() === key);
     preparing = false;
-    if (ok && stateKey() === key) ready = { prev: true, next: true };
+    if (ok && stateKey() === key) {
+      // Arriving while the user is already dragging: fade in instead of popping.
+      if (p !== 0) { late = true; setTimeout(() => (late = false), 220); }
+      ready = { prev: true, next: true };
+    }
     else if (stateKey() !== key || !(ready.prev && ready.next)) idle(120); // try again soon
   }
 
@@ -102,10 +109,15 @@
   let idleTimer = 0;
   let urgent = false; // a swipe just landed: fill the far side right away
   const idle = (ms: number) => { clearTimeout(idleTimer); idleTimer = window.setTimeout(() => void prepareNeighbours(), ms); };
+  // The delay only exists to skip re-renders while sliders are dragged; a new
+  // photo (or a swipe that just landed) gets its neighbours right away.
+  let lastImage: unknown = null;
   $effect(() => {
     void [editor.image, editor.lutVersion, editor.strength, editor.sharpen, editor.film, editor.tweak, fit.w, fit.h];
     if (editor.gesturing) return;
-    idle(urgent ? 0 : 260);
+    const fresh = editor.image !== lastImage;
+    lastImage = editor.image;
+    idle(urgent || fresh ? 0 : 260);
     urgent = false;
   });
 
@@ -267,6 +279,7 @@
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
         style:opacity={ready.prev && p > 0 ? inc.o : 0}
+        style:transition={late ? 'opacity 200ms ease-out' : 'none'}
       ></canvas>
       <canvas
         class="neighbour"
@@ -276,6 +289,7 @@
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
         style:opacity={ready.next && p < 0 ? inc.o : 0}
+        style:transition={late ? 'opacity 200ms ease-out' : 'none'}
       ></canvas>
       <canvas
         bind:this={canvas}
