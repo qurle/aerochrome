@@ -98,6 +98,12 @@
   function key(e: KeyboardEvent, down: boolean) {
     // Hold \ to compare with the original, like in photo editors.
     if (e.code === 'Backslash' && editor.image) { editor.comparing = down; return; }
+    // Esc drops keyboard focus (fullscreen and the help dialog close on their own).
+    if (down && e.code === 'Escape' && !helpOpen && !editor.fullscreen) {
+      const a = document.activeElement as HTMLElement | null;
+      if (a && a !== document.body) a.blur();
+      return;
+    }
     if (!down || typing(e) || e.altKey || helpOpen) return;
     // "?" is Shift+/ on QWERTY; also accept layouts that type "?" elsewhere.
     if ((e.code === 'Slash' && e.shiftKey) || e.key === '?') { helpOpen = true; e.preventDefault(); return; }
@@ -413,7 +419,8 @@
     color: var(--muted);
     font: inherit;
     cursor: pointer;
-    border-radius: 10px; /* gives the focus ring a soft shape */
+    border-radius: var(--r-button); /* gives the focus ring a soft shape */
+    transition: color 0.2s var(--ease), outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
   }
   .help:hover { color: var(--ink); }
 

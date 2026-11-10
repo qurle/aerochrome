@@ -38,7 +38,8 @@
     border-radius: 0;
     /* Same curve both ways: the old selection squares off while the new one
        rounds, a cross-morph. */
-    transition: border-radius 0.32s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.12s ease-out;
+    transition: border-radius 0.32s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.12s ease-out,
+      outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
     -webkit-tap-highlight-color: transparent;
   }
   .thumb:disabled { cursor: default; }

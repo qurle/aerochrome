@@ -126,5 +126,9 @@
     font: inherit;
     font-size: 14px;
     cursor: pointer;
+    border-radius: var(--r-button);
+    transition: opacity 0.2s var(--ease), transform 0.12s ease-out,
+      outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
   }
+  .close:active { opacity: 0.8; transform: scale(0.97); }
 </style>
