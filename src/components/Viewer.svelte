@@ -44,10 +44,7 @@
   let p = $state(0);
   let start: { x: number; y: number; t: number } | null = null;
   let swiping = false;
-  let animating = false;
   let samples: { t: number; x: number }[] = [];
-  let neighboursKey = '';
-  let neighboursReady = $state(false);
 
   // Motion per layer, from progress. Incoming starts 55% of a width out,
   // at 0.8 scale and transparent; the outgoing photo slides fully out.
@@ -72,37 +69,99 @@
     return { x: Math.sign(p) * -1 * (1 - k) * fit.w * IN_FROM, s: IN_SCALE + (1 - IN_SCALE) * k, o: ease(0, 0.55, k) };
   });
 
+  // Neighbour buffers. `curCopy` holds the current frame, so when a swipe
+  // lands the buffers rotate (current → the side we came from, incoming →
+  // current) and only the far side needs a fresh render.
+  let curCopy: HTMLCanvasElement | null = null;
+  let frameEl: HTMLDivElement;
+  let ready = $state({ prev: false, next: false });
+  let readyKey = '';
+
   function stateKey() {
     const img = editor.image;
-    return img ? [img.name, img.width, editor.presetId, editor.neighbour(-1), editor.neighbour(1),
-      editor.tweakFor(editor.neighbour(-1)), editor.tweakFor(editor.neighbour(1)),
-      editor.strength, editor.sharpen, editor.film, canvas.width, canvas.height, editor.lutVersion].join('|') : '';
+    return img ? [img.name, img.width, editor.presetId, editor.tweakFor(editor.neighbour(-1)), editor.tweakFor(editor.neighbour(1)),
+      editor.strength, editor.sharpen, editor.film, editor.tweak, canvas.width, canvas.height].join('|') : '';
   }
 
+  let preparing = false;
   async function prepareNeighbours() {
+    if (preparing || swiping || anim || !editor.image) return;
     const key = stateKey();
-    if (!key || key === neighboursKey || animating || swiping) return;
-    neighboursReady = false;
-    const ok = await editor.renderNeighbours({ prev: prevCanvas, next: nextCanvas }, canvas.width, canvas.height);
-    if (ok && key === stateKey()) { neighboursKey = key; neighboursReady = true; }
+    if (key !== readyKey) { ready = { prev: false, next: false }; readyKey = key; }
+    if (ready.prev && ready.next) return;
+    curCopy ??= document.createElement('canvas');
+    preparing = true;
+    const want = { prev: !ready.prev ? prevCanvas : undefined, next: !ready.next ? nextCanvas : undefined, cur: curCopy };
+    const ok = await editor.renderNeighbours(want, canvas.width, canvas.height, () => !swiping && !anim && stateKey() === key);
+    preparing = false;
+    if (ok && stateKey() === key) ready = { prev: true, next: true };
+    else if (stateKey() !== key || !(ready.prev && ready.next)) idle(120); // try again soon
   }
 
-  // Refresh the neighbours shortly after things settle.
+  // Refresh after settings change (debounced); swipes refresh immediately.
   let idleTimer = 0;
+  let urgent = false; // a swipe just landed: fill the far side right away
+  const idle = (ms: number) => { clearTimeout(idleTimer); idleTimer = window.setTimeout(() => void prepareNeighbours(), ms); };
   $effect(() => {
-    void [editor.image, editor.presetId, editor.lutVersion, editor.strength, editor.sharpen, editor.film, editor.tweak, fit.w, fit.h];
+    void [editor.image, editor.lutVersion, editor.strength, editor.sharpen, editor.film, editor.tweak, fit.w, fit.h];
     if (editor.gesturing) return;
-    clearTimeout(idleTimer);
-    idleTimer = window.setTimeout(() => void prepareNeighbours(), 260);
+    idle(urgent ? 0 : 260);
+    urgent = false;
   });
 
+  const copyInto = (dst: HTMLCanvasElement, src: HTMLCanvasElement) => {
+    if (dst.width !== src.width || dst.height !== src.height) { dst.width = src.width; dst.height = src.height; }
+    const ctx = dst.getContext('2d', { colorSpace: editor.renderer?.space ?? 'srgb' })!;
+    ctx.clearRect(0, 0, dst.width, dst.height);
+    ctx.drawImage(src, 0, 0);
+  };
+
+  /**
+   * Finish a committed swipe: switch the main view in this same frame and
+   * rotate the buffers, so a swipe straight back already has its image.
+   */
+  function land(dir: number) {
+    const towardsNext = dir < 0;
+    const id = editor.neighbour(towardsNext ? 1 : -1);
+    const synced = editor.selectNow(id);
+    const have = { ...ready };
+    if (curCopy && synced) {
+      const [back, front] = towardsNext ? [prevCanvas, nextCanvas] : [nextCanvas, prevCanvas];
+      // back ← old current, then current ← incoming (front); front goes stale.
+      if (have.prev && have.next) {
+        copyInto(back, curCopy);
+        copyInto(curCopy, front);
+        ready = towardsNext ? { prev: true, next: false } : { prev: false, next: true };
+      } else ready = { prev: false, next: false };
+    } else ready = { prev: false, next: false };
+    readyKey = stateKey();
+    p = 0;
+    editor.announce();
+    urgent = true;
+    idle(0);
+  }
+
+  // --- Gesture. A touch during an animation takes over instead of waiting:
+  // during a spring-back it grabs the photo where it is; during a commit it
+  // lands instantly and the new drag starts from there.
+  let anim: { token: number; to: number } | null = null;
+  let token = 0;
+  let p0 = 0;
+
   function down(e: PointerEvent) {
-    if (!editor.image || animating) return;
-    canvas.setPointerCapture(e.pointerId);
+    if (!editor.image) return;
+    if (anim) {
+      const to = anim.to;
+      anim = null;
+      token++;
+      if (to !== 0) land(to);
+    }
+    frameEl.setPointerCapture(e.pointerId);
     start = { x: e.clientX, y: e.clientY, t: performance.now() };
-    swiping = false;
+    p0 = p;
+    swiping = p0 !== 0; // grabbed mid-motion: already a swipe
     samples = [{ t: start.t, x: e.clientX }];
-    if (!neighboursReady) void prepareNeighbours();
+    if (!(ready.prev && ready.next)) void prepareNeighbours();
   }
   function move(e: PointerEvent) {
     if (!start) return;
@@ -111,7 +170,7 @@
     if (!swiping) return;
     samples.push({ t: performance.now(), x: e.clientX });
     while (samples.length > 2 && samples[samples.length - 1].t - samples[0].t > 100) samples.shift();
-    p = Math.max(-1, Math.min(1, dx / fit.w));
+    p = Math.max(-1, Math.min(1, p0 + dx / fit.w));
   }
   async function up(e: PointerEvent) {
     if (!start) return;
@@ -125,44 +184,39 @@
     const a = samples[0], b = samples[samples.length - 1];
     const v = b.t > a.t ? (b.x - a.x) / (b.t - a.t) : 0; // px per ms
     const dir = Math.abs(v) > 0.45 ? Math.sign(v) : Math.abs(p) > 0.3 ? Math.sign(p) : 0;
-    animating = true;
-    if (!dir || Math.sign(p) !== dir) {
-      await animateTo(0, 0.25);
-      animating = false;
-      return;
-    }
-    await animateTo(dir, Math.max(Math.abs(v) / 2.5, 0));
-    // Land: switch the main view to the incoming preset, then drop the layers
-    // in the same frame its first render shows.
-    await editor.select(editor.neighbour(dir < 0 ? 1 : -1));
-    editor.announce();
-    await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    p = 0;
-    neighboursReady = false;
-    animating = false;
+    if (!dir || Math.sign(p) !== dir) { await animateTo(0, 0.25); return; }
+    if (await animateTo(dir, Math.abs(v) / 2.5)) land(dir);
   }
+  function cancel() {
+    if (!start) return;
+    start = null;
+    if (swiping) { swiping = false; void animateTo(0, 0.25); }
+  }
+
   /**
-   * Animate progress to `to` frame by frame, so the layer mapping (sequential
-   * fades, scale, position) holds during the release too; CSS transitions
-   * would interpolate each layer's opacity independently and cross-fade.
-   * A faster flick shortens the duration.
+   * Animate progress to `to` frame by frame (ease-out-quint), so the layer
+   * mapping holds during the release too. Resolves true when it completes,
+   * false if a new touch took over.
    */
   function animateTo(to: number, speed: number) {
     const from = p, dist = Math.abs(to - from);
-    const ms = reduced() ? 0 : Math.round(Math.max(220, Math.min(520, (dist * 560) / (1 + speed))));
-    if (!ms) { p = to; return Promise.resolve(); }
-    const quint = (t: number) => 1 - Math.pow(1 - t, 5); // ease-out-quint
-    return new Promise<void>((done) => {
+    const ms = reduced() ? 0 : Math.round(Math.max(200, Math.min(480, (dist * 540) / (1 + speed))));
+    const my = ++token;
+    if (!ms) { p = to; return Promise.resolve(true); }
+    anim = { token: my, to };
+    const quint = (t: number) => 1 - Math.pow(1 - t, 5);
+    return new Promise<boolean>((done) => {
       const t0 = performance.now();
       const step = (now: number) => {
+        if (my !== token) { done(false); return; }
         const t = Math.min(1, (now - t0) / ms);
         p = from + (to - from) * quint(t);
-        if (t < 1) requestAnimationFrame(step); else done();
+        if (t < 1) requestAnimationFrame(step);
+        else { anim = null; done(true); }
       };
       requestAnimationFrame(step);
     });
   }
-
 
   // Re-render whenever anything visible changes, at most once per frame.
   let raf = 0;
@@ -189,7 +243,22 @@
 <div class="box" bind:this={box}>
   <div class="frame" style:width="{fit.w}px">
     {#if top}<div class="row" bind:clientHeight={topH}>{@render top()}</div>{/if}
-    <div class="image" class:placeholder={!editor.image && !waiting} style:width="{fit.w}px" style:height="{fit.h}px">
+    <!-- Gestures live on this stationary frame, not the moving photo, so a
+         new swipe registers even while the photo is mid-animation. -->
+    <div
+      bind:this={frameEl}
+      class="image"
+      class:placeholder={!editor.image && !waiting}
+      class:interactive={!!editor.image}
+      style:width="{fit.w}px"
+      style:height="{fit.h}px"
+      onpointerdown={down}
+      onpointermove={move}
+      onpointerup={up}
+      onpointercancel={cancel}
+      oncontextmenu={(e) => { if (editor.image) e.preventDefault(); }}
+      role="presentation"
+    >
       <canvas
         class="neighbour"
         bind:this={prevCanvas}
@@ -197,7 +266,7 @@
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
-        style:opacity={neighboursReady && p > 0 ? inc.o : 0}
+        style:opacity={ready.prev && p > 0 ? inc.o : 0}
       ></canvas>
       <canvas
         class="neighbour"
@@ -206,7 +275,7 @@
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
-        style:opacity={neighboursReady && p < 0 ? inc.o : 0}
+        style:opacity={ready.next && p < 0 ? inc.o : 0}
       ></canvas>
       <canvas
         bind:this={canvas}
@@ -218,11 +287,6 @@
         style:transform="translateX({cur.x}px) scale({cur.s})"
         style:opacity={editor.fullscreen ? 1 - editor.fsBg : cur.o}
         style:transition={editor.fullscreen ? editor.fsFade : 'none'}
-        onpointerdown={down}
-        onpointermove={move}
-        onpointerup={up}
-        onpointercancel={() => { start = null; if (swiping) { swiping = false; animating = true; void animateTo(0, 0.25).then(() => (animating = false)); } }}
-        oncontextmenu={(e) => e.preventDefault()}
       ></canvas>
       {#if waiting}
         <img class="dither" src={dither} alt="" aria-hidden="true" />
@@ -253,8 +317,8 @@
   .row { display: flex; gap: 8px; }
   .image { position: relative; max-width: 100%; }
   .placeholder { min-width: min(100%, 280px); }
-  canvas {
-    display: block;
+  canvas { display: block; }
+  .interactive {
     cursor: zoom-in;
     touch-action: pan-y;
     user-select: none;
