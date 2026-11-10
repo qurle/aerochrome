@@ -58,6 +58,6 @@
   .sm { padding: 8px 16px; font-size: 14px; background: var(--bg); }
   .outline-accent { border-color: var(--accent); color: var(--accent); }
   .accent { border-color: var(--accent); background: var(--accent); color: var(--bg); }
-  button:not(:disabled):active { transform: scale(0.97); border-radius: var(--r-button); }
+  button:not(:disabled):active { border-radius: var(--r-button); }
   button:disabled { opacity: 0.3; cursor: default; }
 </style>

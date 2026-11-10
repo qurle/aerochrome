@@ -130,5 +130,5 @@
     transition: opacity 0.2s var(--ease), transform 0.12s ease-out, border-radius 0.2s var(--ease),
       outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
   }
-  .close:active { transform: scale(0.97); border-radius: var(--r-button); }
+  .close:active { border-radius: var(--r-button); }
 </style>
