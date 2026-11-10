@@ -190,13 +190,32 @@ class Editor {
     this.announce();
   }
 
-  async open(file: File) {
+  /** The bundled sample is showing (until the user opens their own photo). */
+  isSample = $state(false);
+  private userOpened = false;
+
+  /** Show the bundled sample photo, unless the user has already opened one. */
+  async loadSample() {
+    if (this.image || this.userOpened) return;
+    try {
+      const res = await fetch('/sample.webp');
+      if (!res.ok) return;
+      const file = new File([await res.blob()], 'sample.webp', { type: 'image/webp' });
+      if (this.image || this.userOpened) return;
+      await this.open(file, true);
+    } catch { /* offline on first visit: keep the empty state */ }
+  }
+
+  async open(file: File, sample = false) {
+    if (!sample) this.userOpened = true;
     this.error = null;
     this.pending = null;
     try {
       const img = await loadImage(file);
+      if (sample && this.userOpened) { img.preview.close(); return; } // user won the race
       this.image?.preview.close();
       this.image = img;
+      this.isSample = sample;
       this.renderer?.setSource(img.preview);
       void this.buildThumbs();
     } catch (e) {
@@ -285,7 +304,7 @@ class Editor {
   }
 
   async exportJpeg(): Promise<void> {
-    if (!this.image || !this.renderer || this.busy) return;
+    if (!this.image || !this.renderer || this.busy || this.isSample) return;
     this.error = null;
     this.busy = { kind: 'export', progress: 0 };
     try {
@@ -319,7 +338,7 @@ class Editor {
 
   /** Copies a PNG capped at 4096 px. Must be called straight from a click. */
   copy() {
-    if (!this.image || !this.renderer || this.busy) return;
+    if (!this.image || !this.renderer || this.busy || this.isSample) return;
     this.error = null;
     this.busy = { kind: 'copy', progress: 0 };
     const png = (async () => {
