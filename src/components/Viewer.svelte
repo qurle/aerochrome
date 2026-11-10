@@ -53,7 +53,8 @@
 
   // Motion per layer, from progress. Incoming starts 55% of a width out,
   // at 0.8 scale and transparent; the outgoing photo slides fully out.
-  const cur = $derived({ x: p * fit.w, s: 1 - Math.abs(p) * 0.06, o: 1 - Math.abs(p) * 0.35 });
+  // Outgoing mirrors the incoming: fully transparent by the end, slightly smaller.
+  const cur = $derived({ x: p * fit.w, s: 1 - Math.abs(p) * 0.12, o: 1 - Math.abs(p) });
   const inc = $derived.by(() => {
     const k = Math.abs(p);
     return { x: Math.sign(p) * -1 * (1 - k) * fit.w * 0.55, s: 0.8 + 0.2 * k, o: k };
