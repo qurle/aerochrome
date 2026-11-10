@@ -605,7 +605,14 @@ class Editor {
     navigator.clipboard
       .write([new ClipboardItem({ 'image/png': png })])
       .then(() => { clearTimeout(reveal); this.busy = { kind: 'copied' }; setTimeout(() => (this.busy = null), 1200); })
-      .catch((e) => { clearTimeout(reveal); this.busy = null; this.error = `Copy failed: ${(e as Error).message}`; });
+      .catch(async (e) => {
+        // The clipboard can refuse before the render is done: until it is, the
+        // renderer holds export tiles, so the view must not redraw yet.
+        await png.catch(() => {});
+        clearTimeout(reveal);
+        this.busy = null;
+        this.error = `Copy failed: ${(e as Error).message}`;
+      });
   }
 }
 

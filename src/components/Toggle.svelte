@@ -41,8 +41,7 @@
     cursor: pointer;
     -webkit-tap-highlight-color: transparent;
   }
-  .label { color: var(--muted); transition: color 0.2s var(--ease); }
-  .toggle:hover .label { color: var(--ink); }
+  .label { color: var(--muted); }
   .note {
     flex: 1;
     min-width: 0;

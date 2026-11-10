@@ -14,7 +14,7 @@
   void editor.checkModel();
   const foliageNote = $derived.by(() => {
     const st = editor.foliageStatus;
-    if (st?.kind === 'download') return `Downloading ${Math.round(st.progress * 100)}%`;
+    if (st?.kind === 'download') return `${Math.round(st.progress * 100)}%`;
     if (st?.kind === 'detect') return 'Detecting…';
     if (st?.kind === 'error') return 'Failed';
     return editor.foliageDownload && !editor.foliage ? `${MODEL_MB} MB` : '';
@@ -91,22 +91,11 @@
     const t = e.target as HTMLElement;
     return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
   }
-  /**
-   * Show a shortcut as a button press: the matching button scales down and
-   * back over 500 ms; on the sample (no such button) the photo does.
-   */
-  function press(label: 'Copy' | 'Export') {
+  /** Show a copy or export shortcut on the photo: it scales down and back over 500 ms. */
+  function press() {
     if (!editor.image || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    const btn = [...document.querySelectorAll<HTMLElement>(`section button[title^="${label}"]`)].find((b) => b.offsetParent);
-    const el = btn ?? document.querySelector<HTMLElement>('section .image');
-    el?.animate(
-      btn
-        ? [
-            { transform: 'scale(1)', borderRadius: '0px' },
-            { transform: 'scale(0.92)', borderRadius: 'var(--r-button)' },
-            { transform: 'scale(1)', borderRadius: '0px' },
-          ]
-        : [{ transform: 'scale(1)' }, { transform: 'scale(0.97)' }, { transform: 'scale(1)' }],
+    document.querySelector<HTMLElement>('section .image')?.animate(
+      [{ transform: 'scale(1)' }, { transform: 'scale(0.97)' }, { transform: 'scale(1)' }],
       { duration: 500, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
     );
   }
@@ -137,8 +126,8 @@
     // ⌘/Ctrl+Shift combos belong to the browser (⌘⇧C inspects, ⌘⇧I/J open DevTools…).
     if (cmd && e.shiftKey) return;
     if (cmd) {
-      if (c === 'KeyC' && !getSelection()?.toString()) { press('Copy'); editor.copy(); }
-      else if (c === 'KeyE' || c === 'KeyS') { press('Export'); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
+      if (c === 'KeyC' && !getSelection()?.toString()) { press(); editor.copy(); }
+      else if (c === 'KeyE' || c === 'KeyS') { press(); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
       else if (c === 'KeyO') open();
       else return;
     } else if (c === 'ArrowRight') editor.step(1);
@@ -277,9 +266,6 @@
     style:transition={mobile && paneTr !== 'none' ? `height ${paneTr}` : null}
   >
     <Viewer onopen={open}>
-      {#snippet top()}
-        <div class="desktop" class:invisible={editor.isSample || (editor.samplePending && !editor.image)}><Button title="Open ({mod}O)" onclick={open}>Open</Button></div>
-      {/snippet}
       {#snippet bottom()}
         <div class="actions">
           {#if editor.isSample || (editor.samplePending && !editor.image)}
@@ -289,7 +275,7 @@
             <Button variant="accent" title="Open ({mod}O)" onclick={open}>Open your photo</Button>
             <span class="spacer"></span>
           {:else}
-            <span class="mobile"><Button onclick={open}>Open</Button></span>
+            <Button title="Open ({mod}O)" onclick={open}>Open</Button>
             <span class="spacer"></span>
             <span class="desktop">
               <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!shown} onclick={() => editor.copy()}>{copyLabel}</Button>
@@ -385,18 +371,17 @@
     min-width: 0;
     display: flex;
     flex-direction: column;
-    padding: clamp(32px, 9vw, 128px);
+    padding: 32px clamp(32px, 9vw, 128px);
   }
   .actions { display: flex; flex: 1; gap: 8px; align-items: center; }
   .spacer { flex: 1; }
-  .invisible { visibility: hidden; }
   .error { margin: 16px 0 0; color: var(--accent); text-align: center; font-size: 14px; }
 
   .settings {
     flex: none;
     width: 441px;
     border-left: 1px solid var(--line);
-    padding: 64px 80px;
+    padding: 32px 80px;
     display: flex;
     flex-direction: column;
   }
