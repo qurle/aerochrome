@@ -38,12 +38,10 @@
   // fading in. On release it finishes (or springs back) with a smooth ease;
   // the main view switches preset in the same frame the animation lands.
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'; // ease-out-quint: fast start, long soft landing
   let prevCanvas: HTMLCanvasElement;
   let nextCanvas: HTMLCanvasElement;
   /** Swipe progress -1..1: negative = towards next (finger moving left). */
   let p = $state(0);
-  let tr = $state('none');
   let start: { x: number; y: number; t: number } | null = null;
   let swiping = false;
   let animating = false;
@@ -53,11 +51,17 @@
 
   // Motion per layer, from progress. Incoming starts 55% of a width out,
   // at 0.8 scale and transparent; the outgoing photo slides fully out.
-  // Outgoing mirrors the incoming: fully transparent by the end, slightly smaller.
-  const cur = $derived({ x: p * fit.w, s: 1 - Math.abs(p) * 0.12, o: 1 - Math.abs(p) });
+  // Fades are sequential, never overlapping, so each layer stays solid:
+  // the outgoing photo fades out over the first half of the swipe, the
+  // incoming one fades in over the second half.
+  const ease = (a: number, b: number, x: number) => {
+    const t = Math.min(1, Math.max(0, (x - a) / (b - a)));
+    return t * t * (3 - 2 * t);
+  };
+  const cur = $derived({ x: p * fit.w, s: 1 - Math.abs(p) * 0.12, o: 1 - ease(0, 0.5, Math.abs(p)) });
   const inc = $derived.by(() => {
     const k = Math.abs(p);
-    return { x: Math.sign(p) * -1 * (1 - k) * fit.w * 0.55, s: 0.8 + 0.2 * k, o: k };
+    return { x: Math.sign(p) * -1 * (1 - k) * fit.w * 0.55, s: 0.8 + 0.2 * k, o: ease(0.5, 1, k) };
   });
 
   function stateKey() {
@@ -99,7 +103,6 @@
     if (!swiping) return;
     samples.push({ t: performance.now(), x: e.clientX });
     while (samples.length > 2 && samples[samples.length - 1].t - samples[0].t > 100) samples.shift();
-    tr = 'none';
     p = Math.max(-1, Math.min(1, dx / fit.w));
   }
   async function up(e: PointerEvent) {
@@ -126,19 +129,32 @@
     await editor.select(editor.neighbour(dir < 0 ? 1 : -1));
     editor.announce();
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    tr = 'none';
     p = 0;
     neighboursReady = false;
     animating = false;
   }
-  /** Animate progress to `to`; a faster flick shortens the duration. */
+  /**
+   * Animate progress to `to` frame by frame, so the layer mapping (sequential
+   * fades, scale, position) holds during the release too; CSS transitions
+   * would interpolate each layer's opacity independently and cross-fade.
+   * A faster flick shortens the duration.
+   */
   function animateTo(to: number, speed: number) {
-    const dist = Math.abs(to - p);
+    const from = p, dist = Math.abs(to - from);
     const ms = reduced() ? 0 : Math.round(Math.max(220, Math.min(520, (dist * 560) / (1 + speed))));
-    tr = ms ? `transform ${ms}ms ${EASE}, opacity ${ms}ms ${EASE}` : 'none';
-    p = to;
-    return new Promise((r) => setTimeout(r, ms + 16));
+    if (!ms) { p = to; return Promise.resolve(); }
+    const quint = (t: number) => 1 - Math.pow(1 - t, 5); // ease-out-quint
+    return new Promise<void>((done) => {
+      const t0 = performance.now();
+      const step = (now: number) => {
+        const t = Math.min(1, (now - t0) / ms);
+        p = from + (to - from) * quint(t);
+        if (t < 1) requestAnimationFrame(step); else done();
+      };
+      requestAnimationFrame(step);
+    });
   }
+
 
   // Re-render whenever anything visible changes, at most once per frame.
   let raf = 0;
@@ -174,7 +190,6 @@
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
         style:opacity={neighboursReady && p > 0 ? inc.o : 0}
-        style:transition={tr}
       ></canvas>
       <canvas
         class="neighbour"
@@ -184,7 +199,6 @@
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
         style:opacity={neighboursReady && p < 0 ? inc.o : 0}
-        style:transition={tr}
       ></canvas>
       <canvas
         bind:this={canvas}
@@ -195,7 +209,7 @@
         title="Open fullscreen (F) · swipe to change preset"
         style:transform="translateX({cur.x}px) scale({cur.s})"
         style:opacity={editor.fullscreen ? 1 - editor.fsBg : cur.o}
-        style:transition={editor.fullscreen ? editor.fsFade : tr}
+        style:transition={editor.fullscreen ? editor.fsFade : 'none'}
         onpointerdown={down}
         onpointermove={move}
         onpointerup={up}
