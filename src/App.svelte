@@ -15,6 +15,39 @@
   let helpOpen = $state(false);
   /** Preset list scrolled away from the top: show the top fade. */
   let listScrolled = $state(false);
+  /** More of the list below: show the bottom fade. */
+  let listMore = $state(true);
+  const listScroll = (el: HTMLElement) => {
+    listScrolled = el.scrollTop > 2;
+    listMore = el.scrollTop + el.clientHeight < el.scrollHeight - 2;
+  };
+  // Also on load and resize: a list that fits needs no bottom fade.
+  $effect(() => {
+    if (!listEl) return;
+    const ro = new ResizeObserver(() => listScroll(listEl));
+    ro.observe(listEl);
+    for (const child of listEl.children) ro.observe(child);
+    return () => ro.disconnect();
+  });
+  let listEl: HTMLDivElement;
+
+  // Keep the selected preset's group in view when presets change by keyboard
+  // or swipe (clicked thumbnails are already visible, so this is a no-op then).
+  $effect(() => {
+    void editor.presetId;
+    requestAnimationFrame(() => {
+      const thumb = listEl?.querySelector('.thumb.selected');
+      const group = thumb?.closest('.group') as HTMLElement | null;
+      if (!listEl || !group || listEl.scrollHeight <= listEl.clientHeight) return;
+      const fade = 28; // room for the top/bottom fades
+      const box = listEl.getBoundingClientRect(), g = group.getBoundingClientRect();
+      let top = listEl.scrollTop;
+      if (g.top < box.top + fade) top += g.top - box.top - fade;
+      else if (g.bottom > box.bottom - fade) top += g.bottom - box.bottom + fade;
+      else return;
+      listEl.scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+  });
 
   const group = $derived(groupOf(editor.presetId));
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -46,28 +79,46 @@
     const t = e.target as HTMLElement;
     return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
   }
+  /**
+   * Show a shortcut as a button press: the matching button scales down and
+   * back over 320 ms; on the sample (no such button) the photo does.
+   */
+  function press(label: 'Copy' | 'Export') {
+    if (!editor.image || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+    const btn = [...document.querySelectorAll<HTMLElement>(`section button[title^="${label}"]`)].find((b) => b.offsetParent);
+    const el = btn ?? document.querySelector<HTMLElement>('section .image');
+    el?.animate(
+      [{ transform: 'scale(1)' }, { transform: `scale(${btn ? 0.92 : 0.97})` }, { transform: 'scale(1)' }],
+      { duration: 320, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+    );
+  }
+
+  // Shortcuts match physical keys (KeyboardEvent.code), so they work in any
+  // layout: T is the same key on Russian ЙЦУКЕН (Е) as on QWERTY.
   function key(e: KeyboardEvent, down: boolean) {
-    // Hold "\\" to compare with the original, like in photo editors.
-    if (e.key === '\\' && editor.image) { editor.comparing = down; return; }
+    // Hold \ to compare with the original, like in photo editors.
+    if (e.code === 'Backslash' && editor.image) { editor.comparing = down; return; }
     if (!down || typing(e) || e.altKey || helpOpen) return;
-    if (e.key === '?') { helpOpen = true; e.preventDefault(); return; }
+    // "?" is Shift+/ on QWERTY; also accept layouts that type "?" elsewhere.
+    if ((e.code === 'Slash' && e.shiftKey) || e.key === '?') { helpOpen = true; e.preventDefault(); return; }
     const cmd = e.metaKey || e.ctrlKey;
-    const k = e.key.toLowerCase();
+    const c = e.code;
     if (cmd) {
-      if (k === 'c' && !getSelection()?.toString()) editor.copy();
-      else if (k === 'e' || k === 's') void (editor.pending ? editor.savePending() : editor.exportJpeg());
-      else if (k === 'o') open();
+      if (c === 'KeyC' && !getSelection()?.toString()) { press('Copy'); editor.copy(); }
+      else if (c === 'KeyE' || c === 'KeyS') { press('Export'); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
+      else if (c === 'KeyO') open();
       else return;
-    } else if (e.key === 'ArrowRight') editor.step(1);
-    else if (e.key === 'ArrowLeft') editor.step(-1);
-    else if (e.key === 'ArrowDown') editor.stepGroup(1);
-    else if (e.key === 'ArrowUp') editor.stepGroup(-1);
-    else if (k === 'o') open();
-    else if (k === 'f') editor.fullscreen ? editor.closeFullscreen() : editor.openFullscreen();
-    else if (k === 't') editor.setTweak(e.shiftKey ? DEFAULTS.tweak : Math.floor(Math.random() * 101));
+    } else if (c === 'ArrowRight') editor.step(1);
+    else if (c === 'ArrowLeft') editor.step(-1);
+    else if (c === 'ArrowDown') editor.stepGroup(1);
+    else if (c === 'ArrowUp') editor.stepGroup(-1);
+    else if (c === 'KeyO') open();
+    else if (c === 'KeyF') editor.fullscreen ? editor.closeFullscreen() : editor.openFullscreen();
+    else if (c === 'KeyT') editor.setTweak(e.shiftKey ? DEFAULTS.tweak : Math.floor(Math.random() * 101));
     else return;
     e.preventDefault();
   }
+
 
   // --- Presets pane (mobile): follows the finger, settles with momentum.
   // Progress p: 0 = open, 1 = collapsed. The stage height is driven from here;
@@ -149,16 +200,18 @@
   }
   const goTo = (i: number) => pager.scrollTo({ left: i * pager.scrollWidth, behavior: 'smooth' });
 
+  /** Busy state as the UI shows it: a copy stays invisible for its first 500 ms. */
+  const shown = $derived(editor.busy?.quiet ? null : editor.busy);
   const exportLabel = $derived.by(() => {
-    const b = editor.busy;
+    const b = shown;
     if (editor.pending) return 'Save';
     if (b?.kind === 'export') return `${Math.round((b.progress ?? 0) * 100)}%`;
     if (b?.kind === 'encode') return 'Saving…';
     return 'Export';
   });
   const copyLabel = $derived(
-    editor.busy?.kind === 'copy' ? `${Math.round((editor.busy.progress ?? 0) * 100)}%` :
-    editor.busy?.kind === 'copied' ? 'Copied' : 'Copy');
+    shown?.kind === 'copy' ? `${Math.round((shown.progress ?? 0) * 100)}%` :
+    shown?.kind === 'copied' ? 'Copied' : 'Copy');
   const exportClick = () => (editor.pending ? editor.savePending() : editor.exportJpeg());
   const noImage = $derived(!editor.image);
 </script>
@@ -198,6 +251,8 @@
       {#snippet bottom()}
         <div class="actions">
           {#if editor.isSample || (editor.samplePending && !editor.image)}
+            <!-- Sample: one action, open your own photo. Copy and export still
+                 work on the sample through their shortcuts. -->
             <span class="spacer"></span>
             <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
             <span class="spacer"></span>
@@ -205,9 +260,9 @@
             <span class="mobile"><Button onclick={open}>Open</Button></span>
             <span class="spacer"></span>
             <span class="desktop">
-              <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!editor.busy} onclick={() => editor.copy()}>{copyLabel}</Button>
+              <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!shown} onclick={() => editor.copy()}>{copyLabel}</Button>
             </span>
-            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!editor.busy && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
+            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!shown && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
           {/if}
         </div>
       {/snippet}
@@ -229,8 +284,8 @@
       <span class="current"><span class="label">{group.name}</span> {editor.preset.name}</span>
     </button>
     <div class="pager" bind:this={pager} onscroll={scrolled}>
-      <div class="page presets" class:scrolled={listScrolled}>
-        <div class="scroll" onscroll={(e) => (listScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
+      <div class="page presets" class:scrolled={listScrolled} class:more={listMore}>
+        <div class="scroll" bind:this={listEl} onscroll={(e) => listScroll(e.currentTarget as HTMLElement)}>
           {#each GROUPS as group (group.id)}
             <div class="group">
               <span class="label">{group.name}</span>
@@ -320,14 +375,21 @@
     height: 24px;
     background: linear-gradient(transparent, var(--bg));
     pointer-events: none;
+    opacity: 0;
+    transition: opacity 0.2s;
   }
+  .presets.more::after { opacity: 1; }
+  /* Scroll containers clip their overflow, which would crop the keyboard
+     focus ring (2px + 2px offset) at the edges. 6px of padding with a
+     matching negative margin gives it room without moving anything. */
   .scroll {
-    height: 100%;
+    height: calc(100% + 6px);
     overflow-y: auto;
     display: flex;
     flex-direction: column;
     gap: 16px;
-    padding-bottom: 24px;
+    margin: -6px -6px 0;
+    padding: 6px 6px 24px;
     scrollbar-width: none;
   }
   .scroll::-webkit-scrollbar { display: none; }
@@ -351,6 +413,7 @@
     color: var(--muted);
     font: inherit;
     cursor: pointer;
+    border-radius: 10px; /* gives the focus ring a soft shape */
   }
   .help:hover { color: var(--ink); }
 
@@ -418,7 +481,8 @@
     }
     .pager::-webkit-scrollbar { display: none; }
     .page { flex: none; width: calc(100% - 40px); height: 100%; scroll-snap-align: start; }
-    .sliders { justify-content: flex-start; gap: 14px; overflow-y: auto; padding-bottom: 8px; }
+    /* Same ring room as the list; widened by the padding so content width stays put. */
+    .page.sliders { width: calc(100% - 28px); justify-content: flex-start; gap: 14px; overflow-y: auto; margin: -6px; padding: 6px 6px 14px; }
     .dots { padding: 12px 0 max(16px, env(safe-area-inset-bottom)); }
   }
 </style>

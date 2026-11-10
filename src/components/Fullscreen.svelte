@@ -337,11 +337,13 @@
   }
 
   function key(e: KeyboardEvent) {
-    if (e.key === 'Escape') editor.closeFullscreen();
-    else if (e.key === '+' || e.key === '=') zoomTo(s * 1.5, vw / 2, vh / 2);
-    else if (e.key === '-') zoomTo(s / 1.5, vw / 2, vh / 2);
-    else if (e.key === '0') { const from = { s, x, y }; fit(); animateZoom(from, { s, x, y }); }
-    else if (e.key === '1') zoomTo(1 / dpr(), vw / 2, vh / 2);
+    // Physical keys, so zoom works in any keyboard layout.
+    const c = e.code;
+    if (c === 'Escape') editor.closeFullscreen();
+    else if (c === 'Equal' || c === 'NumpadAdd') zoomTo(s * 1.5, vw / 2, vh / 2);
+    else if (c === 'Minus' || c === 'NumpadSubtract') zoomTo(s / 1.5, vw / 2, vh / 2);
+    else if (c === 'Digit0' || c === 'Numpad0') { const from = { s, x, y }; fit(); animateZoom(from, { s, x, y }); }
+    else if (c === 'Digit1' || c === 'Numpad1') zoomTo(1 / dpr(), vw / 2, vh / 2);
     else return;
     e.preventDefault();
   }

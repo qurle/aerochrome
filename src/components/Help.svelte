@@ -11,18 +11,24 @@
   type Row = { keys: string[][]; action: string };
   // Each inner array is one key combination; several combinations mean "or".
   const shortcuts: Row[] = [
+    // Presets
     { keys: [['←'], ['→']], action: 'Previous / next preset' },
     { keys: [['↑'], ['↓']], action: 'Same preset in the previous / next group' },
-    { keys: [['T']], action: 'Random Tweak' },
-    { keys: [[shift, 'T']], action: 'Reset Tweak' },
-    { keys: [['\\']], action: 'Hold to see the original' },
-    { keys: [['F']], action: 'Fullscreen' },
-    { keys: [['+'], ['−'], ['0'], ['1']], action: 'Fullscreen: zoom in, out, fit, 100%' },
-    { keys: [['Esc']], action: 'Close fullscreen' },
+    // File
     { keys: [['O'], [mod, 'O']], action: 'Open a photo' },
     { keys: [[mod, 'V']], action: 'Paste a photo' },
     { keys: [[mod, 'C']], action: 'Copy image' },
     { keys: [[mod, 'E']], action: 'Export JPEG' },
+    // Tweak
+    { keys: [['T']], action: 'Random Tweak' },
+    { keys: [[shift, 'T']], action: 'Reset Tweak' },
+    // Fullscreen
+    { keys: [['F']], action: 'Fullscreen' },
+    { keys: [['+'], ['−'], ['0'], ['1']], action: 'Fullscreen: zoom in, out, fit, 100%' },
+    { keys: [['Esc']], action: 'Close fullscreen' },
+    // Compare
+    { keys: [['\\']], action: 'Hold to see the original' },
+    // Help
     { keys: [['?']], action: 'This help' },
   ];
 
@@ -38,7 +44,9 @@
   onclose={() => (open = false)}
   onclick={(e) => { if (e.target === dialog) open = false; }}
 >
-  <div class="panel">
+  <!-- autofocus: opening puts focus on the panel, not on the first link. -->
+  <!-- svelte-ignore a11y_autofocus -->
+  <div class="panel" tabindex="-1" autofocus>
     <p id="help-title" class="credit">
       made by <a href="https://qurle.net" target="_blank" rel="noopener">qurle</a> feat. claude opus
     </p>
@@ -86,7 +94,7 @@
     dialog[open], dialog[open]::backdrop { animation: none; }
   }
 
-  .panel { display: flex; flex-direction: column; gap: 20px; padding: 32px; }
+  .panel { display: flex; flex-direction: column; gap: 20px; padding: 32px; outline: none; }
   p { margin: 0; }
   .credit { font-size: 16px; }
   .credit a { color: inherit; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 2px; }
