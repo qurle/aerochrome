@@ -14,8 +14,10 @@
   const rowsH = $derived((top ? topH + 16 : 0) + (bottom ? bottomH + 16 : 0));
 
   const waiting = $derived(!editor.image && editor.samplePending);
-  // The placeholder has the sample's 3:4 shape, so nothing moves when it arrives.
-  const aspect = $derived(editor.image ? editor.image.width / editor.image.height : waiting ? 3 / 4 : 4 / 3);
+  // After a reload, the photo's own dithered frame; otherwise the sample's.
+  const restoring = $derived(editor.restoring ? editor.restorePlaceholder : null);
+  // The placeholder has the incoming photo's shape, so nothing moves when it arrives.
+  const aspect = $derived(editor.image ? editor.image.width / editor.image.height : waiting ? (restoring?.aspect ?? 3 / 4) : 4 / 3);
   const fit = $derived.by(() => {
     const h = Math.max(120, avail.h - rowsH);
     const w = Math.max(120, Math.min(avail.w, h * aspect));
@@ -275,6 +277,7 @@
       const ch = Math.round((cw * h) / w);
       if (canvas.width !== cw || canvas.height !== ch) { canvas.width = cw; canvas.height = ch; }
       editor.renderer!.render(params, [img.width, img.height]);
+      editor.schedulePlaceholder();
     });
   });
 
@@ -332,7 +335,7 @@
       ></canvas>
       <canvas class="fade" bind:this={fadeCanvas} aria-hidden="true" style:width="{fit.w}px" style:height="{fit.h}px"></canvas>
       {#if waiting}
-        <img class="dither" src={dither} alt="" aria-hidden="true" />
+        <img class="dither" src={restoring?.src ?? dither} alt="" aria-hidden="true" />
       {:else if !editor.image}
         <button class="empty" onclick={onopen}>
           <span>Drop a photo here</span>
@@ -341,7 +344,7 @@
       {/if}
       {#if editor.comparing}<span class="badge">Original</span>
       {:else if editor.flash}<span class="badge">{editor.flash}</span>
-      {:else if waiting || (editor.isSample && editor.sampleFresh && p === 0)}<span class="badge sample">Sample</span>{/if}
+      {:else if (waiting && !editor.restoring) || (editor.isSample && editor.sampleFresh && p === 0)}<span class="badge sample">Sample</span>{/if}
     </div>
     {#if bottom}<div class="row" bind:clientHeight={bottomH}>{@render bottom()}</div>{/if}
   </div>

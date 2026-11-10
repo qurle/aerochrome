@@ -8,7 +8,7 @@ import { Renderer, type MaskData, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
 import { drawDitheredDraft } from './image/dither';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
-import { loadPhoto, savePhoto } from './image/persist';
+import { hasSavedPhoto, loadPhoto, loadPlaceholder, savePhoto, savePlaceholder, type Placeholder } from './image/persist';
 import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
 import { detectScene } from './seg/detect';
 import { modelCached } from './seg/model';
@@ -364,6 +364,10 @@ class Editor {
   sampleFresh = $state(true);
   /** The sample is on its way: show its dithered placeholder meanwhile. */
   samplePending = $state(true);
+  /** A reload is bringing back this tab's photo (instead of the sample). */
+  restoring = $state(hasSavedPhoto());
+  /** Its dithered frame from before the reload, if one was kept. */
+  restorePlaceholder: Placeholder | null = this.restoring ? loadPlaceholder() : null;
   private userOpened = false;
 
   /**
@@ -371,12 +375,15 @@ class Editor {
    * unless the user has already opened one.
    */
   async loadSample() {
-    if (this.image || this.userOpened) { this.samplePending = false; return; }
+    // A photo the user opened ends the wait itself once decoded.
+    if (this.image || this.userOpened) { if (this.image) this.samplePending = false; return; }
     const restored = await loadPhoto();
     if (restored && !this.image && !this.userOpened) {
       await this.open(restored, false, true);
+      this.restoring = false;
       if (this.image) return;
     }
+    this.restoring = false;
     try {
       // Hashed asset: cached for good by the browser and the service worker.
       const res = await fetch(sampleUrl);
@@ -385,13 +392,14 @@ class Editor {
       if (this.image || this.userOpened) return;
       await this.open(file, true);
     } catch { /* offline on first visit: fall back to the empty state */ } finally {
-      this.samplePending = false;
+      if (!this.userOpened) this.samplePending = false;
     }
   }
 
   /** `restored`: the photo comes back from before a reload (already stored). */
   async open(file: File, sample = false, restored = false) {
-    if (!sample) { this.userOpened = true; this.samplePending = false; }
+    // The placeholder stays up until this photo is decoded (no empty state in between).
+    if (!sample) this.userOpened = true;
     this.error = null;
     this.pending = null;
     try {
@@ -399,6 +407,7 @@ class Editor {
       if (sample && this.userOpened) { img.preview.close(); return; } // user won the race
       this.image?.preview.close();
       this.image = img;
+      this.samplePending = false;
       this.isSample = sample;
       if (!sample && !restored) void savePhoto(file);
       this.renderer?.setSource(img.preview);
@@ -407,8 +416,33 @@ class Editor {
       void this.buildThumbs();
       if (this.foliage) void this.detect();
     } catch (e) {
+      if (!sample) this.samplePending = false;
       this.error = (e as Error).message;
     }
+  }
+
+  private placeholderTimer = 0;
+
+  /**
+   * Keep a tiny dithered copy of the current frame for the next reload, once
+   * edits settle. Only for the user's own photo; the sample ships its own.
+   */
+  schedulePlaceholder() {
+    clearTimeout(this.placeholderTimer);
+    if (this.isSample || !this.image) return;
+    this.placeholderTimer = window.setTimeout(() => {
+      const r = this.renderer, img = this.image;
+      if (!r || !img || this.isSample || this.busy || this.fullscreen) return;
+      // WebGL keeps no frame around: render and copy within this task.
+      const c = r.canvas as HTMLCanvasElement;
+      r.render(this.params(), [img.width, img.height]);
+      const small = document.createElement('canvas');
+      small.width = 96;
+      small.height = Math.max(1, Math.round((96 * c.height) / c.width));
+      drawDitheredDraft(small, c, r.space);
+      if (this.comparing) r.render(this.params(true), [img.width, img.height]);
+      savePlaceholder({ src: small.toDataURL('image/png'), aspect: img.width / img.height });
+    }, 1000);
   }
 
   private async buildThumbs() {

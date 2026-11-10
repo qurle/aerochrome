@@ -51,6 +51,23 @@ export async function savePhoto(file: File) {
   } catch { /* no storage: reloads start over */ }
 }
 
+const PLACEHOLDER_KEY = 'aerochrome:placeholder';
+/** A tiny dithered frame of the photo as last seen, shown while a reload restores it. */
+export interface Placeholder { src: string; aspect: number }
+
+export function savePlaceholder(p: Placeholder) {
+  try { sessionStorage.setItem(PLACEHOLDER_KEY, JSON.stringify(p)); } catch { /* full or unavailable */ }
+}
+
+export function loadPlaceholder(): Placeholder | null {
+  try {
+    const p = JSON.parse(sessionStorage.getItem(PLACEHOLDER_KEY) ?? 'null');
+    return p && typeof p.src === 'string' && p.aspect > 0 ? p : null;
+  } catch {
+    return null;
+  }
+}
+
 /** Whether this tab stored a photo before (a reload should restore it first thing). */
 export function hasSavedPhoto() {
   try { return sessionStorage.getItem(SAVED_KEY) === '1'; } catch { return false; }
