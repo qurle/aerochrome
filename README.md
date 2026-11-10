@@ -37,7 +37,7 @@ with MozJPEG in a worker. Copy puts a PNG (max 4096 px) on the clipboard.
 |---|---|
 | ← / → | Previous / next preset |
 | ↑ / ↓ | Same preset in the previous / next group |
-| O, ⌘/Ctrl+O | Open a photo |
+| ⌘/Ctrl+O | Open a photo |
 | ⌘/Ctrl+V | Paste a photo |
 | ⌘/Ctrl+C | Copy (PNG, max 4096 px) |
 | ⌘/Ctrl+E or S | Export JPEG |

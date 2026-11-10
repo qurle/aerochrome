@@ -126,7 +126,6 @@
     else if (c === 'ArrowLeft') editor.step(-1);
     else if (c === 'ArrowDown') editor.stepGroup(1);
     else if (c === 'ArrowUp') editor.stepGroup(-1);
-    else if (c === 'KeyO') open();
     else if (c === 'KeyF') editor.fullscreen ? editor.closeFullscreen() : editor.openFullscreen();
     else if (c === 'KeyT') editor.setTweak(e.shiftKey ? DEFAULTS.tweak : Math.floor(Math.random() * 101));
     else return;
@@ -260,7 +259,7 @@
   >
     <Viewer onopen={open}>
       {#snippet top()}
-        <div class="desktop" class:invisible={editor.isSample || (editor.samplePending && !editor.image)}><Button title="Open (O)" onclick={open}>Open</Button></div>
+        <div class="desktop" class:invisible={editor.isSample || (editor.samplePending && !editor.image)}><Button title="Open ({mod}O)" onclick={open}>Open</Button></div>
       {/snippet}
       {#snippet bottom()}
         <div class="actions">
@@ -268,7 +267,7 @@
             <!-- Sample: one action, open your own photo. Copy and export still
                  work on the sample through their shortcuts. -->
             <span class="spacer"></span>
-            <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
+            <Button variant="accent" title="Open ({mod}O)" onclick={open}>Open your photo</Button>
             <span class="spacer"></span>
           {:else}
             <span class="mobile"><Button onclick={open}>Open</Button></span>
