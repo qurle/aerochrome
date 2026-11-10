@@ -81,15 +81,21 @@
   }
   /**
    * Show a shortcut as a button press: the matching button scales down and
-   * back over 320 ms; on the sample (no such button) the photo does.
+   * back over 500 ms; on the sample (no such button) the photo does.
    */
   function press(label: 'Copy' | 'Export') {
     if (!editor.image || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
     const btn = [...document.querySelectorAll<HTMLElement>(`section button[title^="${label}"]`)].find((b) => b.offsetParent);
     const el = btn ?? document.querySelector<HTMLElement>('section .image');
     el?.animate(
-      [{ transform: 'scale(1)' }, { transform: `scale(${btn ? 0.92 : 0.97})` }, { transform: 'scale(1)' }],
-      { duration: 320, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+      btn
+        ? [
+            { transform: 'scale(1)', borderRadius: '0px' },
+            { transform: 'scale(0.92)', borderRadius: 'var(--r-button)' },
+            { transform: 'scale(1)', borderRadius: '0px' },
+          ]
+        : [{ transform: 'scale(1)' }, { transform: 'scale(0.97)' }, { transform: 'scale(1)' }],
+      { duration: 500, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
     );
   }
 
@@ -98,11 +104,19 @@
   function key(e: KeyboardEvent, down: boolean) {
     // Hold \ to compare with the original, like in photo editors.
     if (e.code === 'Backslash' && editor.image) { editor.comparing = down; return; }
+    // Esc drops keyboard focus (fullscreen and the help dialog close on their own).
+    if (down && e.code === 'Escape' && !helpOpen && !editor.fullscreen) {
+      const a = document.activeElement as HTMLElement | null;
+      if (a && a !== document.body) a.blur();
+      return;
+    }
     if (!down || typing(e) || e.altKey || helpOpen) return;
     // "?" is Shift+/ on QWERTY; also accept layouts that type "?" elsewhere.
     if ((e.code === 'Slash' && e.shiftKey) || e.key === '?') { helpOpen = true; e.preventDefault(); return; }
     const cmd = e.metaKey || e.ctrlKey;
     const c = e.code;
+    // ⌘/Ctrl+Shift combos belong to the browser (⌘⇧C inspects, ⌘⇧I/J open DevTools…).
+    if (cmd && e.shiftKey) return;
     if (cmd) {
       if (c === 'KeyC' && !getSelection()?.toString()) { press('Copy'); editor.copy(); }
       else if (c === 'KeyE' || c === 'KeyS') { press('Export'); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
@@ -413,7 +427,8 @@
     color: var(--muted);
     font: inherit;
     cursor: pointer;
-    border-radius: 10px; /* gives the focus ring a soft shape */
+    border-radius: var(--r-button); /* gives the focus ring a soft shape */
+    transition: color 0.2s var(--ease), outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
   }
   .help:hover { color: var(--ink); }
 

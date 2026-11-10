@@ -48,11 +48,16 @@
     white-space: nowrap;
     cursor: pointer;
     font-variant-numeric: tabular-nums;
-    transition: opacity 0.15s, background-color 0.15s;
+    /* Square at rest; corners round while pressed. */
+    border-radius: 0;
+    transition:
+      opacity 0.2s var(--ease), background-color 0.2s var(--ease), border-color 0.2s var(--ease),
+      color 0.2s var(--ease), transform 0.12s ease-out, border-radius 0.2s var(--ease),
+      outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
   }
   .sm { padding: 8px 16px; font-size: 14px; background: var(--bg); }
   .outline-accent { border-color: var(--accent); color: var(--accent); }
   .accent { border-color: var(--accent); background: var(--accent); color: var(--bg); }
-  button:not(:disabled):active { opacity: 0.8; }
+  button:not(:disabled):active { border-radius: var(--r-button); }
   button:disabled { opacity: 0.3; cursor: default; }
 </style>

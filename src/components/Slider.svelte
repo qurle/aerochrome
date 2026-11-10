@@ -85,6 +85,7 @@
   <div
     bind:this={track}
     class="track"
+    class:dragging
     style:--c={color}
     role="slider"
     tabindex={disabled ? -1 : 0}
@@ -118,7 +119,12 @@
       value={Math.round(value * (steps || 100))}
       {disabled}
       onchange={typed}
-      onkeydown={(e) => { e.stopPropagation(); if (e.key === 'Enter') (e.currentTarget as HTMLInputElement).blur(); }}
+      onkeydown={(e) => {
+        e.stopPropagation();
+        const el = e.currentTarget as HTMLInputElement;
+        if (e.key === 'Enter') el.blur();
+        else if (e.key === 'Escape') { el.value = String(Math.round(value * (steps || 100))); el.blur(); }
+      }}
       onfocus={(e) => (e.currentTarget as HTMLInputElement).select()}
     />
   {/if}
@@ -139,12 +145,29 @@
     flex: 1;
     position: relative;
     height: 28px;
-    border: 2px solid var(--c);
+    /* Square at rest; rounded while pressed or dragged. */
+    border-radius: 0;
+    overflow: hidden;
     cursor: ew-resize;
     touch-action: pan-y;
     user-select: none;
+    transition: border-color 0.2s var(--ease), opacity 0.2s var(--ease), border-radius 0.2s var(--ease),
+      outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
   }
-  .fill { position: relative; height: 100%; background: var(--c); }
+  .track:active, .track.dragging { border-radius: var(--r-control); }
+  /* The border is drawn on top, so the fill runs under it to the outer edge:
+     two rounded shapes of the same colour side by side leave an anti-aliased
+     seam, an overlay doesn't. */
+  .track::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    border: 2px solid var(--c);
+    border-radius: inherit;
+    pointer-events: none;
+  }
+  /* inherit follows the track's radius, including mid-transition. */
+  .fill { position: relative; height: 100%; background: var(--c); border-radius: inherit; }
   /* Changes from shortcuts and preset switches glide; dragging tracks the finger. */
   .glide { transition: width 0.28s cubic-bezier(0.2, 0.8, 0.2, 1); }
   @media (prefers-reduced-motion: reduce) { .glide { transition: none; } }
@@ -167,10 +190,14 @@
     font: inherit;
     font-variant-numeric: tabular-nums;
     text-align: center;
+    /* Square at rest; rounded while editing. */
     border-radius: 0;
     appearance: none;
+    transition: border-color 0.2s var(--ease), color 0.2s var(--ease), border-radius 0.2s var(--ease),
+      outline-color 0.18s var(--ease), outline-offset 0.18s var(--ease);
   }
-  .value:focus { outline: none; background: var(--c); color: var(--bg); }
+  .value:focus, .value:active { border-radius: var(--r-control); }
+  .slider { transition: opacity 0.2s var(--ease); }
   .disabled { opacity: 0.3; }
   .disabled .track { cursor: default; }
 </style>
