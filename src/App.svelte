@@ -200,6 +200,7 @@
           {#if editor.isSample}
             <span class="spacer"></span>
             <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
+            <span class="spacer"></span>
           {:else}
             <span class="mobile"><Button onclick={open}>Open</Button></span>
             <span class="spacer"></span>
