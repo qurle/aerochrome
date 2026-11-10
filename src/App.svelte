@@ -369,12 +369,14 @@
   }
   .pager { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 64px; }
   .presets { flex: 1; min-height: 0; position: relative; }
+  /* The fades cover the list's 6px focus-ring margin (see .scroll) too, or
+     tiles show through above and beside them. */
   .presets::before {
     content: '';
     position: absolute;
-    left: 0; right: 0; top: 0;
-    height: 24px;
-    background: linear-gradient(var(--bg), transparent);
+    left: -6px; right: -6px; top: -6px;
+    height: 30px;
+    background: linear-gradient(var(--bg) 6px, transparent);
     pointer-events: none;
     z-index: 1;
     opacity: 0;
@@ -384,7 +386,7 @@
   .presets::after {
     content: '';
     position: absolute;
-    left: 0; right: 0; bottom: 0;
+    left: -6px; right: -6px; bottom: 0;
     height: 24px;
     background: linear-gradient(transparent, var(--bg));
     pointer-events: none;
