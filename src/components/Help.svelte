@@ -41,7 +41,12 @@
 <dialog
   bind:this={dialog}
   aria-labelledby="help-title"
-  onclose={() => (open = false)}
+  onclose={() => {
+    open = false;
+    // The dialog hands focus back to its opener (the ? button); Esc would then show a
+    // focus ring there. Keep that only for keyboard navigation.
+    if (document.documentElement.dataset.nav !== 'keyboard') (document.activeElement as HTMLElement | null)?.blur();
+  }}
   onclick={(e) => { if (e.target === dialog) open = false; }}
 >
   <!-- autofocus: opening puts focus on the panel, not on the first link. -->
