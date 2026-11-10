@@ -11,16 +11,17 @@
   type Row = { keys: string[][]; action: string };
   // Each inner array is one key combination; several combinations mean "or".
   const shortcuts: Row[] = [
-    // Navigation
+    // Presets
     { keys: [['←'], ['→']], action: 'Previous / next preset' },
     { keys: [['↑'], ['↓']], action: 'Same preset in the previous / next group' },
-    { keys: [['T']], action: 'Random Tweak' },
-    { keys: [[shift, 'T']], action: 'Reset Tweak' },
     // File
     { keys: [['O'], [mod, 'O']], action: 'Open a photo' },
     { keys: [[mod, 'V']], action: 'Paste a photo' },
     { keys: [[mod, 'C']], action: 'Copy image' },
     { keys: [[mod, 'E']], action: 'Export JPEG' },
+    // Tweak
+    { keys: [['T']], action: 'Random Tweak' },
+    { keys: [[shift, 'T']], action: 'Reset Tweak' },
     // Fullscreen
     { keys: [['F']], action: 'Fullscreen' },
     { keys: [['+'], ['−'], ['0'], ['1']], action: 'Fullscreen: zoom in, out, fit, 100%' },

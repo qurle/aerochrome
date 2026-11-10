@@ -216,25 +216,16 @@
   >
     <Viewer onopen={open}>
       {#snippet top()}
-        <div class="desktop">
-          {#if editor.isSample || (editor.samplePending && !editor.image)}
-            <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
-          {:else}
-            <Button title="Open (O)" onclick={open}>Open</Button>
-          {/if}
-        </div>
+        <div class="desktop" class:invisible={editor.isSample || (editor.samplePending && !editor.image)}><Button title="Open (O)" onclick={open}>Open</Button></div>
       {/snippet}
       {#snippet bottom()}
         <div class="actions">
           {#if editor.isSample || (editor.samplePending && !editor.image)}
-            <!-- Sample: opening your own photo stays the main action (top row
-                 on desktop); the sample can still be copied and exported. -->
-            <span class="mobile"><Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button></span>
+            <!-- Sample: one action, open your own photo. Copy and export still
+                 work on the sample through their shortcuts. -->
             <span class="spacer"></span>
-            <span class="desktop">
-              <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!editor.busy} onclick={() => editor.copy()}>{copyLabel}</Button>
-            </span>
-            <Button variant="outline-accent" title="Export ({mod}E)" disabled={noImage || (!!editor.busy && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
+            <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
+            <span class="spacer"></span>
           {:else}
             <span class="mobile"><Button onclick={open}>Open</Button></span>
             <span class="spacer"></span>
@@ -322,10 +313,7 @@
   }
   .actions { display: flex; flex: 1; gap: 8px; align-items: center; }
   .spacer { flex: 1; }
-  /* Narrow phones: tighter buttons so the sample row fits. */
-  @media (max-width: 380px) {
-    .actions :global(button) { padding-left: 18px; padding-right: 18px; }
-  }
+  .invisible { visibility: hidden; }
   .error { margin: 16px 0 0; color: var(--accent); text-align: center; font-size: 14px; }
 
   .settings {
