@@ -115,6 +115,8 @@
     if ((e.code === 'Slash' && e.shiftKey) || e.key === '?') { helpOpen = true; e.preventDefault(); return; }
     const cmd = e.metaKey || e.ctrlKey;
     const c = e.code;
+    // ⌘/Ctrl+Shift combos belong to the browser (⌘⇧C inspects, ⌘⇧I/J open DevTools…).
+    if (cmd && e.shiftKey) return;
     if (cmd) {
       if (c === 'KeyC' && !getSelection()?.toString()) { press('Copy'); editor.copy(); }
       else if (c === 'KeyE' || c === 'KeyS') { press('Export'); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
