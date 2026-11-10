@@ -32,22 +32,64 @@
     return () => ro.disconnect();
   });
 
-  // Tap opens fullscreen. A horizontal drag slides the photo with the finger;
-  // past a threshold (or on a flick) it slides out and the next preset slides in.
-  // All CSS transforms on the rendered canvas; one WebGL render per switch.
+  // --- Swipe carousel. The previous and next presets are pre-rendered into
+  // two 2D canvases when idle. While dragging, the current photo follows the
+  // finger and the incoming one slides in from its side, growing from 0.8 and
+  // fading in. On release it finishes (or springs back) with a smooth ease;
+  // the main view switches preset in the same frame the animation lands.
   const reduced = () => matchMedia('(prefers-reduced-motion: reduce)').matches;
-  const EASE = 'cubic-bezier(0.2, 0.85, 0.25, 1)';
-  let slide = $state({ x: 0, op: 1, tr: 'none' });
+  const EASE = 'cubic-bezier(0.22, 1, 0.36, 1)'; // ease-out-quint: fast start, long soft landing
+  let prevCanvas: HTMLCanvasElement;
+  let nextCanvas: HTMLCanvasElement;
+  /** Swipe progress -1..1: negative = towards next (finger moving left). */
+  let p = $state(0);
+  let tr = $state('none');
   let start: { x: number; y: number; t: number } | null = null;
   let swiping = false;
+  let animating = false;
   let samples: { t: number; x: number }[] = [];
+  let neighboursKey = '';
+  let neighboursReady = $state(false);
+
+  // Motion per layer, from progress. Incoming starts 55% of a width out,
+  // at 0.8 scale and transparent; the outgoing photo slides fully out.
+  const cur = $derived({ x: p * fit.w, s: 1 - Math.abs(p) * 0.06, o: 1 - Math.abs(p) * 0.35 });
+  const inc = $derived.by(() => {
+    const k = Math.abs(p);
+    return { x: Math.sign(p) * -1 * (1 - k) * fit.w * 0.55, s: 0.8 + 0.2 * k, o: k };
+  });
+
+  function stateKey() {
+    const img = editor.image;
+    return img ? [img.name, img.width, editor.presetId, editor.neighbour(-1), editor.neighbour(1),
+      editor.tweakFor(editor.neighbour(-1)), editor.tweakFor(editor.neighbour(1)),
+      editor.strength, editor.sharpen, editor.film, canvas.width, canvas.height, editor.lutVersion].join('|') : '';
+  }
+
+  async function prepareNeighbours() {
+    const key = stateKey();
+    if (!key || key === neighboursKey || animating || swiping) return;
+    neighboursReady = false;
+    const ok = await editor.renderNeighbours({ prev: prevCanvas, next: nextCanvas }, canvas.width, canvas.height);
+    if (ok && key === stateKey()) { neighboursKey = key; neighboursReady = true; }
+  }
+
+  // Refresh the neighbours shortly after things settle.
+  let idleTimer = 0;
+  $effect(() => {
+    void [editor.image, editor.presetId, editor.lutVersion, editor.strength, editor.sharpen, editor.film, editor.tweak, fit.w, fit.h];
+    if (editor.gesturing) return;
+    clearTimeout(idleTimer);
+    idleTimer = window.setTimeout(() => void prepareNeighbours(), 260);
+  });
 
   function down(e: PointerEvent) {
-    if (!editor.image) return;
+    if (!editor.image || animating) return;
     canvas.setPointerCapture(e.pointerId);
     start = { x: e.clientX, y: e.clientY, t: performance.now() };
     swiping = false;
     samples = [{ t: start.t, x: e.clientX }];
+    if (!neighboursReady) void prepareNeighbours();
   }
   function move(e: PointerEvent) {
     if (!start) return;
@@ -56,7 +98,8 @@
     if (!swiping) return;
     samples.push({ t: performance.now(), x: e.clientX });
     while (samples.length > 2 && samples[samples.length - 1].t - samples[0].t > 100) samples.shift();
-    slide = { x: dx, op: 1 - Math.min(0.5, Math.abs(dx) / fit.w), tr: 'none' };
+    tr = 'none';
+    p = Math.max(-1, Math.min(1, dx / fit.w));
   }
   async function up(e: PointerEvent) {
     if (!start) return;
@@ -68,19 +111,32 @@
     }
     swiping = false;
     const a = samples[0], b = samples[samples.length - 1];
-    const v = b.t > a.t ? (b.x - a.x) / (b.t - a.t) : 0;
-    const dir = Math.abs(v) > 0.5 ? Math.sign(v) : Math.abs(dx) > fit.w * 0.25 ? Math.sign(dx) : 0;
-    if (!dir) { await go({ x: 0, op: 1 }, 220); return; }
-    await go({ x: dir * fit.w * 0.6, op: 0 }, 140);
-    editor.step(dir < 0 ? 1 : -1);
-    slide = { x: -dir * fit.w * 0.25, op: 0, tr: 'none' };
+    const v = b.t > a.t ? (b.x - a.x) / (b.t - a.t) : 0; // px per ms
+    const dir = Math.abs(v) > 0.45 ? Math.sign(v) : Math.abs(p) > 0.3 ? Math.sign(p) : 0;
+    animating = true;
+    if (!dir || Math.sign(p) !== dir) {
+      await animateTo(0, 0.25);
+      animating = false;
+      return;
+    }
+    await animateTo(dir, Math.max(Math.abs(v) / 2.5, 0));
+    // Land: switch the main view to the incoming preset, then drop the layers
+    // in the same frame its first render shows.
+    await editor.select(editor.neighbour(dir < 0 ? 1 : -1));
+    editor.announce();
     await new Promise((r) => requestAnimationFrame(() => requestAnimationFrame(r)));
-    await go({ x: 0, op: 1 }, 240);
+    tr = 'none';
+    p = 0;
+    neighboursReady = false;
+    animating = false;
   }
-  function go(to: { x: number; op: number }, ms: number) {
-    ms = reduced() ? 0 : ms;
-    slide = { ...to, tr: ms ? `transform ${ms}ms ${EASE}, opacity ${ms}ms ${EASE}` : 'none' };
-    return new Promise((r) => setTimeout(r, ms));
+  /** Animate progress to `to`; a faster flick shortens the duration. */
+  function animateTo(to: number, speed: number) {
+    const dist = Math.abs(to - p);
+    const ms = reduced() ? 0 : Math.round(Math.max(220, Math.min(520, (dist * 560) / (1 + speed))));
+    tr = ms ? `transform ${ms}ms ${EASE}, opacity ${ms}ms ${EASE}` : 'none';
+    p = to;
+    return new Promise((r) => setTimeout(r, ms + 16));
   }
 
   // Re-render whenever anything visible changes, at most once per frame.
@@ -110,18 +166,39 @@
     {#if top}<div class="row" bind:clientHeight={topH}>{@render top()}</div>{/if}
     <div class="image" class:placeholder={!editor.image && !waiting} style:width="{fit.w}px" style:height="{fit.h}px">
       <canvas
+        class="neighbour"
+        bind:this={prevCanvas}
+        aria-hidden="true"
+        style:width="{fit.w}px"
+        style:height="{fit.h}px"
+        style:transform="translateX({inc.x}px) scale({inc.s})"
+        style:opacity={neighboursReady && p > 0 ? inc.o : 0}
+        style:transition={tr}
+      ></canvas>
+      <canvas
+        class="neighbour"
+        bind:this={nextCanvas}
+        aria-hidden="true"
+        style:width="{fit.w}px"
+        style:height="{fit.h}px"
+        style:transform="translateX({inc.x}px) scale({inc.s})"
+        style:opacity={neighboursReady && p < 0 ? inc.o : 0}
+        style:transition={tr}
+      ></canvas>
+      <canvas
         bind:this={canvas}
+        class="main"
         class:hidden={!editor.image}
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         title="Open fullscreen (F) · swipe to change preset"
-        style:transform="translateX({slide.x}px)"
-        style:opacity={editor.fullscreen ? 1 - editor.fsBg : slide.op}
-        style:transition={editor.fullscreen ? editor.fsFade : slide.tr}
+        style:transform="translateX({cur.x}px) scale({cur.s})"
+        style:opacity={editor.fullscreen ? 1 - editor.fsBg : cur.o}
+        style:transition={editor.fullscreen ? editor.fsFade : tr}
         onpointerdown={down}
         onpointermove={move}
         onpointerup={up}
-        onpointercancel={() => { start = null; if (swiping) { swiping = false; void go({ x: 0, op: 1 }, 220); } }}
+        onpointercancel={() => { start = null; if (swiping) { swiping = false; animating = true; void animateTo(0, 0.25).then(() => (animating = false)); } }}
         oncontextmenu={(e) => e.preventDefault()}
       ></canvas>
       {#if waiting}
@@ -163,9 +240,17 @@
   }
   .hidden { display: none; }
   /* The real photo fades in over where the dithered placeholder was. */
-  canvas:not(.hidden) { animation: reveal 0.45s ease-out; }
+  canvas.main:not(.hidden) { animation: reveal 0.45s ease-out; }
   @keyframes reveal { from { opacity: 0; } }
-  @media (prefers-reduced-motion: reduce) { canvas:not(.hidden) { animation: none; } }
+  @media (prefers-reduced-motion: reduce) { canvas.main:not(.hidden) { animation: none; } }
+  .main { position: relative; z-index: 1; will-change: transform, opacity; }
+  .neighbour {
+    position: absolute;
+    left: 0;
+    top: 0;
+    pointer-events: none;
+    will-change: transform, opacity;
+  }
   .dither {
     position: absolute;
     inset: 0;
@@ -193,6 +278,7 @@
   .muted { color: var(--muted); }
   .badge {
     position: absolute;
+    z-index: 2;
     top: 12px;
     left: 12px;
     padding: 4px 10px;

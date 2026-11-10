@@ -44,9 +44,14 @@ class Editor {
   get preset() { return findPreset(this.presetId); }
 
   params(original = false): RenderParams {
-    const p = this.preset;
+    return this.paramsFor(this.presetId, this.tweak, original);
+  }
+
+  /** Render parameters for any preset at a given Tweak (current sliders otherwise). */
+  paramsFor(id: string, t: number, original = false): RenderParams {
+    const p = findPreset(id);
     if (original) return { strength: 0, sharpen: 0, film: 0, recipe: p.film, aberration: 0, split: [0, 0], prism: 0, flare: 0, leak: [0, 0, 0], seed: 0, edge: 0, blend: [0, 0, 0, 0] };
-    const fx = spatial(p), t = this.tweak, k = this.strength;
+    const fx = spatial(p), k = this.strength;
     // Tweak also varies effect strengths, and its value lays out the light spots.
     const e = (ch: number) => k * tweakEffect(t, ch);
     return {
@@ -165,11 +170,51 @@ class Editor {
     for (const d of [1, -1]) void this.luts.set(ALL_PRESETS[(i + d + ALL_PRESETS.length) % ALL_PRESETS.length].id, space, Priority.Soon);
   }
 
+  /** Previous and next presets in display order (what a swipe goes to). */
+  neighbour(by: 1 | -1) {
+    const i = ALL_PRESETS.findIndex((p) => p.id === this.presetId);
+    return ALL_PRESETS[(i + by + ALL_PRESETS.length) % ALL_PRESETS.length].id;
+  }
+
+  /**
+   * Render the previous and next presets into two 2D canvases (for the swipe
+   * carousel), using the main renderer and canvas, then restore the current
+   * view. Everything after the LUT lookups runs in one task, so the main
+   * canvas never shows the neighbours.
+   */
+  async renderNeighbours(targets: { prev: HTMLCanvasElement; next: HTMLCanvasElement }, w: number, h: number) {
+    const r = this.renderer, img = this.image, cur = this.currentLut;
+    if (!r || !img || !cur) return false;
+    const ids = { prev: this.neighbour(-1), next: this.neighbour(1) };
+    const lutOf = async (id: string) => {
+      const t = this.tweakFor(id);
+      return t === TWEAK_NEUTRAL
+        ? this.luts.peekBase(id, r.space) ?? this.luts.base(id, r.space, Priority.Soon)
+        : this.luts.peekSet(id, r.space) ?? this.luts.set(id, r.space, Priority.Soon);
+    };
+    const [lp, ln] = await Promise.all([lutOf(ids.prev), lutOf(ids.next)]);
+    // Bail if anything changed while waiting, or a render is mid-flight elsewhere.
+    if (r !== this.renderer || img !== this.image || cur !== this.currentLut || this.busy) return false;
+    const c = r.canvas as HTMLCanvasElement;
+    if (c.width !== w || c.height !== h) return false;
+    for (const [key, lut] of [['prev', lp], ['next', ln]] as const) {
+      const id = ids[key];
+      r.setLut(lut);
+      r.render(this.paramsFor(id, this.tweakFor(id)), [img.width, img.height]);
+      const t = targets[key];
+      if (t.width !== w || t.height !== h) { t.width = w; t.height = h; }
+      t.getContext('2d', { colorSpace: r.space })!.drawImage(c, 0, 0);
+    }
+    r.setLut(cur);
+    r.render(this.params(this.comparing), [img.width, img.height]);
+    return true;
+  }
+
   /** Name shown briefly over the photo after switching by swipe or keyboard. */
   flash = $state<string | null>(null);
   private flashTimer = 0;
 
-  private announce() {
+  announce() {
     this.flash = `${groupOf(this.presetId).name} ${this.preset.name}`;
     clearTimeout(this.flashTimer);
     this.flashTimer = window.setTimeout(() => (this.flash = null), 1100);
