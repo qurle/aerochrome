@@ -5,7 +5,7 @@
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
   const mod = isMac ? '⌘' : 'Ctrl';
   const shift = isMac ? '⇧' : 'Shift';
-  // Touch-only devices get gestures instead of keyboard shortcuts.
+  // Touch-only devices (phones) get no shortcuts table.
   const touch = matchMedia('(pointer: coarse)').matches && !matchMedia('(pointer: fine)').matches;
 
   type Row = { keys: string[][]; action: string };
@@ -23,13 +23,6 @@
     { keys: [[mod, 'C']], action: 'Copy image' },
     { keys: [[mod, 'E']], action: 'Export JPEG' },
     { keys: [['?']], action: 'This help' },
-  ];
-  const gestures = [
-    { gesture: 'Tap the photo', action: 'Fullscreen' },
-    { gesture: 'Swipe the photo', action: 'Previous / next preset' },
-    { gesture: 'Drag the handle', action: 'Hide or show presets' },
-    { gesture: 'Pinch, double-tap', action: 'Zoom in fullscreen' },
-    { gesture: 'Swipe up or down', action: 'Close fullscreen' },
   ];
 
   $effect(() => {
@@ -52,15 +45,7 @@
       Here you can imitate IR photos in Aerochrome aesthetics. Pick a preset and tune it with the sliders.
     </p>
 
-    {#if touch}
-      <table>
-        <tbody>
-          {#each gestures as g (g.gesture)}
-            <tr><th scope="row">{g.gesture}</th><td>{g.action}</td></tr>
-          {/each}
-        </tbody>
-      </table>
-    {:else}
+    {#if !touch}
       <table>
         <tbody>
           {#each shortcuts as row (row.action)}
@@ -104,12 +89,12 @@
   p { margin: 0; }
   .credit { font-size: 16px; }
   .credit a { color: inherit; text-decoration: underline; text-underline-offset: 3px; text-decoration-thickness: 2px; }
-  .about { color: var(--muted); line-height: 1.45; }
+  .about { line-height: 1.45; }
 
   table { border-collapse: collapse; width: 100%; font-size: 14px; }
   th, td { padding: 6px 0; text-align: left; vertical-align: baseline; font-weight: 600; }
   th { padding-right: 20px; white-space: nowrap; }
-  td { color: var(--muted); }
+
   .combo { display: inline-flex; gap: 3px; }
   .or { display: inline-block; min-width: 6px; margin: 0 6px; color: var(--muted); font-size: 13px; }
   .or:empty { margin: 0; }
