@@ -81,7 +81,7 @@
   }
   /**
    * Show a shortcut as a button press: the matching button scales down and
-   * back over 320 ms; on the sample (no such button) the photo does.
+   * back over 500 ms; on the sample (no such button) the photo does.
    */
   function press(label: 'Copy' | 'Export') {
     if (!editor.image || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
@@ -89,7 +89,7 @@
     const el = btn ?? document.querySelector<HTMLElement>('section .image');
     el?.animate(
       [{ transform: 'scale(1)' }, { transform: `scale(${btn ? 0.92 : 0.97})` }, { transform: 'scale(1)' }],
-      { duration: 320, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
+      { duration: 500, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
     );
   }
 
