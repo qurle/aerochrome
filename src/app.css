@@ -8,6 +8,7 @@
   --coral: #f16b59;
   --steel: #48819e;
   --violet: #8b6fc7;
+  --orange: #ff7a1a;
   --muted: rgb(30 14 29 / 0.3);
   --placeholder: #e7e4e5;
   color-scheme: light;
@@ -25,4 +26,7 @@
 html, body { margin: 0; height: 100%; }
 body { overscroll-behavior: none; }
 button { font: inherit; color: inherit; }
-:focus-visible { outline: 2px solid var(--steel); outline-offset: 2px; }
+:focus { outline: none; }
+/* Rings only for keyboard navigation (browsers skip :focus-visible on clicks). */
+:focus-visible { outline: 2px solid var(--orange); outline-offset: 2px; }
+::selection { background: var(--orange); color: #fff; }

@@ -15,6 +15,25 @@
   let helpOpen = $state(false);
   /** Preset list scrolled away from the top: show the top fade. */
   let listScrolled = $state(false);
+  let listEl: HTMLDivElement;
+
+  // Keep the selected preset's group in view when presets change by keyboard
+  // or swipe (clicked thumbnails are already visible, so this is a no-op then).
+  $effect(() => {
+    void editor.presetId;
+    requestAnimationFrame(() => {
+      const thumb = listEl?.querySelector('.thumb.selected');
+      const group = thumb?.closest('.group') as HTMLElement | null;
+      if (!listEl || !group || listEl.scrollHeight <= listEl.clientHeight) return;
+      const fade = 28; // room for the top/bottom fades
+      const box = listEl.getBoundingClientRect(), g = group.getBoundingClientRect();
+      let top = listEl.scrollTop;
+      if (g.top < box.top + fade) top += g.top - box.top - fade;
+      else if (g.bottom > box.bottom - fade) top += g.bottom - box.bottom + fade;
+      else return;
+      listEl.scrollTo({ top, behavior: matchMedia('(prefers-reduced-motion: reduce)').matches ? 'auto' : 'smooth' });
+    });
+  });
 
   const group = $derived(groupOf(editor.presetId));
   const isMac = /Mac|iPhone|iPad/.test(navigator.platform);
@@ -46,28 +65,32 @@
     const t = e.target as HTMLElement;
     return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
   }
+  // Shortcuts match physical keys (KeyboardEvent.code), so they work in any
+  // layout: T is the same key on Russian ЙЦУКЕН (Е) as on QWERTY.
   function key(e: KeyboardEvent, down: boolean) {
-    // Hold "\\" to compare with the original, like in photo editors.
-    if (e.key === '\\' && editor.image) { editor.comparing = down; return; }
+    // Hold \ to compare with the original, like in photo editors.
+    if (e.code === 'Backslash' && editor.image) { editor.comparing = down; return; }
     if (!down || typing(e) || e.altKey || helpOpen) return;
-    if (e.key === '?') { helpOpen = true; e.preventDefault(); return; }
+    // "?" is Shift+/ on QWERTY; also accept layouts that type "?" elsewhere.
+    if ((e.code === 'Slash' && e.shiftKey) || e.key === '?') { helpOpen = true; e.preventDefault(); return; }
     const cmd = e.metaKey || e.ctrlKey;
-    const k = e.key.toLowerCase();
+    const c = e.code;
     if (cmd) {
-      if (k === 'c' && !getSelection()?.toString()) editor.copy();
-      else if (k === 'e' || k === 's') void (editor.pending ? editor.savePending() : editor.exportJpeg());
-      else if (k === 'o') open();
+      if (c === 'KeyC' && !getSelection()?.toString()) editor.copy();
+      else if (c === 'KeyE' || c === 'KeyS') void (editor.pending ? editor.savePending() : editor.exportJpeg());
+      else if (c === 'KeyO') open();
       else return;
-    } else if (e.key === 'ArrowRight') editor.step(1);
-    else if (e.key === 'ArrowLeft') editor.step(-1);
-    else if (e.key === 'ArrowDown') editor.stepGroup(1);
-    else if (e.key === 'ArrowUp') editor.stepGroup(-1);
-    else if (k === 'o') open();
-    else if (k === 'f') editor.fullscreen ? editor.closeFullscreen() : editor.openFullscreen();
-    else if (k === 't') editor.setTweak(e.shiftKey ? DEFAULTS.tweak : Math.floor(Math.random() * 101));
+    } else if (c === 'ArrowRight') editor.step(1);
+    else if (c === 'ArrowLeft') editor.step(-1);
+    else if (c === 'ArrowDown') editor.stepGroup(1);
+    else if (c === 'ArrowUp') editor.stepGroup(-1);
+    else if (c === 'KeyO') open();
+    else if (c === 'KeyF') editor.fullscreen ? editor.closeFullscreen() : editor.openFullscreen();
+    else if (c === 'KeyT') editor.setTweak(e.shiftKey ? DEFAULTS.tweak : Math.floor(Math.random() * 101));
     else return;
     e.preventDefault();
   }
+
 
   // --- Presets pane (mobile): follows the finger, settles with momentum.
   // Progress p: 0 = open, 1 = collapsed. The stage height is driven from here;
@@ -193,14 +216,25 @@
   >
     <Viewer onopen={open}>
       {#snippet top()}
-        <div class="desktop" class:invisible={editor.isSample || (editor.samplePending && !editor.image)}><Button title="Open (O)" onclick={open}>Open</Button></div>
+        <div class="desktop">
+          {#if editor.isSample || (editor.samplePending && !editor.image)}
+            <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
+          {:else}
+            <Button title="Open (O)" onclick={open}>Open</Button>
+          {/if}
+        </div>
       {/snippet}
       {#snippet bottom()}
         <div class="actions">
           {#if editor.isSample || (editor.samplePending && !editor.image)}
+            <!-- Sample: opening your own photo stays the main action (top row
+                 on desktop); the sample can still be copied and exported. -->
+            <span class="mobile"><Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button></span>
             <span class="spacer"></span>
-            <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
-            <span class="spacer"></span>
+            <span class="desktop">
+              <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!editor.busy} onclick={() => editor.copy()}>{copyLabel}</Button>
+            </span>
+            <Button variant="outline-accent" title="Export ({mod}E)" disabled={noImage || (!!editor.busy && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
           {:else}
             <span class="mobile"><Button onclick={open}>Open</Button></span>
             <span class="spacer"></span>
@@ -230,7 +264,7 @@
     </button>
     <div class="pager" bind:this={pager} onscroll={scrolled}>
       <div class="page presets" class:scrolled={listScrolled}>
-        <div class="scroll" onscroll={(e) => (listScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
+        <div class="scroll" bind:this={listEl} onscroll={(e) => (listScrolled = (e.currentTarget as HTMLElement).scrollTop > 2)}>
           {#each GROUPS as group (group.id)}
             <div class="group">
               <span class="label">{group.name}</span>
@@ -288,7 +322,10 @@
   }
   .actions { display: flex; flex: 1; gap: 8px; align-items: center; }
   .spacer { flex: 1; }
-  .invisible { visibility: hidden; }
+  /* Narrow phones: tighter buttons so the sample row fits. */
+  @media (max-width: 380px) {
+    .actions :global(button) { padding-left: 18px; padding-right: 18px; }
+  }
   .error { margin: 16px 0 0; color: var(--accent); text-align: center; font-size: 14px; }
 
   .settings {

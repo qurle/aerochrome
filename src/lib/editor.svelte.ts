@@ -427,7 +427,7 @@ class Editor {
   }
 
   async exportJpeg(): Promise<void> {
-    if (!this.image || !this.renderer || this.busy || this.isSample) return;
+    if (!this.image || !this.renderer || this.busy) return;
     this.error = null;
     this.busy = { kind: 'export', progress: 0 };
     try {
@@ -461,7 +461,7 @@ class Editor {
 
   /** Copies a PNG capped at 4096 px. Must be called straight from a click. */
   copy() {
-    if (!this.image || !this.renderer || this.busy || this.isSample) return;
+    if (!this.image || !this.renderer || this.busy) return;
     this.error = null;
     this.busy = { kind: 'copy', progress: 0 };
     const png = (async () => {

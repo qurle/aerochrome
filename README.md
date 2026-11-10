@@ -38,13 +38,16 @@ with MozJPEG in a worker. Copy puts a PNG (max 4096 px) on the clipboard.
 | ← / → | Previous / next preset |
 | ↑ / ↓ | Same preset in the previous / next group |
 | T, Shift+T | Random Tweak, reset Tweak |
-| F | Fullscreen (Esc closes) |
-| \\ (hold) | Show the original |
 | O, ⌘/Ctrl+O | Open a photo |
 | ⌘/Ctrl+V | Paste a photo |
 | ⌘/Ctrl+C | Copy (PNG, max 4096 px) |
 | ⌘/Ctrl+E or S | Export JPEG |
+| F | Fullscreen (Esc closes) |
 | + / − / 0 / 1 | Fullscreen: zoom in / out / fit / 100% |
+| \\ (hold) | Show the original |
+| ? | Help |
+
+Shortcuts use physical key positions, so they work in any keyboard layout.
 
 ## Develop
 
