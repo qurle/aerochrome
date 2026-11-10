@@ -69,14 +69,19 @@
     return { x: Math.sign(p) * -1 * (1 - k) * fit.w * IN_FROM, s: IN_SCALE + (1 - IN_SCALE) * k, o: ease(0, 0.55, k) };
   });
 
-  // Neighbour buffers. `curCopy` holds the current frame, so when a swipe
-  // lands the buffers rotate (current → the side we came from, incoming →
-  // current) and only the far side needs a fresh render.
+  // Neighbour buffers, each at a level: 0 = grey skeleton, 1 = dithered
+  // low-res draft in the preset's colours, 2 = full render. The incoming layer
+  // always animates with whatever level it has, so a swipe never waits.
+  // `curCopy` holds the current frame, so when a swipe lands the buffers
+  // rotate (current → the side we came from) and only the far side restarts.
+  type Side = 'prev' | 'next';
   let curCopy: HTMLCanvasElement | null = null;
-  let late = $state(false);
+  let curValid = false;
   let frameEl: HTMLDivElement;
-  let ready = $state({ prev: false, next: false });
+  let lv = $state<Record<Side, number>>({ prev: 0, next: 0 });
   let readyKey = '';
+  const el = (k: Side) => (k === 'prev' ? prevCanvas : nextCanvas);
+  const clear = (c: HTMLCanvasElement) => c.getContext('2d')?.clearRect(0, 0, c.width, c.height);
 
   function stateKey() {
     const img = editor.image;
@@ -84,25 +89,34 @@
       editor.strength, editor.sharpen, editor.film, editor.tweak, canvas.width, canvas.height].join('|') : '';
   }
 
-  // Safe at any time, even mid-swipe: the neighbour renders happen within one
-  // task and the main canvas is restored before anything is composited.
+  // Safe at any time, even mid-swipe: renders happen within one task and the
+  // main canvas is restored before anything is composited.
   let preparing = false;
   async function prepareNeighbours() {
-    if (preparing || !editor.image) return;
+    if (!editor.image) return;
     const key = stateKey();
-    if (key !== readyKey) { ready = { prev: false, next: false }; readyKey = key; }
-    if (ready.prev && ready.next) return;
+    if (key !== readyKey) {
+      readyKey = key;
+      lv = { prev: 0, next: 0 };
+      curValid = false;
+      clear(prevCanvas); clear(nextCanvas);
+    }
+    // 1. Drafts, synchronously, from the small LUTs (requested if missing).
+    const want = { prev: lv.prev === 0 ? prevCanvas : undefined, next: lv.next === 0 ? nextCanvas : undefined };
+    if (want.prev || want.next) {
+      const { drawn, pending } = editor.renderDrafts(want);
+      if (drawn.prev || drawn.next) lv = { prev: drawn.prev ? 1 : lv.prev, next: drawn.next ? 1 : lv.next };
+      pending?.then(() => { if (stateKey() === key) void prepareNeighbours(); });
+    }
+    // 2. Full renders, when their LUTs are baked (normal queue priority).
+    if (preparing || (lv.prev === 2 && lv.next === 2)) return;
     curCopy ??= document.createElement('canvas');
     preparing = true;
-    const want = { prev: !ready.prev ? prevCanvas : undefined, next: !ready.next ? nextCanvas : undefined, cur: curCopy };
-    const ok = await editor.renderNeighbours(want, canvas.width, canvas.height, () => stateKey() === key);
+    const full = { prev: lv.prev < 2 ? prevCanvas : undefined, next: lv.next < 2 ? nextCanvas : undefined, cur: curCopy };
+    const ok = await editor.renderNeighbours(full, canvas.width, canvas.height, () => stateKey() === key);
     preparing = false;
-    if (ok && stateKey() === key) {
-      // Arriving while the user is already dragging: fade in instead of popping.
-      if (p !== 0) { late = true; setTimeout(() => (late = false), 220); }
-      ready = { prev: true, next: true };
-    }
-    else if (stateKey() !== key || !(ready.prev && ready.next)) idle(120); // try again soon
+    if (ok && stateKey() === key) { lv = { prev: 2, next: 2 }; curValid = true; }
+    else idle(120); // try again soon
   }
 
   // Refresh after settings change (debounced); swipes refresh immediately.
@@ -136,22 +150,20 @@
     const towardsNext = dir < 0;
     const id = editor.neighbour(towardsNext ? 1 : -1);
     const synced = editor.selectNow(id);
-    const have = { ...ready };
-    if (curCopy && synced) {
-      const [back, front] = towardsNext ? [prevCanvas, nextCanvas] : [nextCanvas, prevCanvas];
-      // back ← old current, then current ← incoming (front); front goes stale.
-      if (have.prev && have.next) {
-        copyInto(back, curCopy);
-        copyInto(curCopy, front);
-        ready = towardsNext ? { prev: true, next: false } : { prev: false, next: true };
-      } else ready = { prev: false, next: false };
-    } else ready = { prev: false, next: false };
+    const back: Side = towardsNext ? 'prev' : 'next', front: Side = towardsNext ? 'next' : 'prev';
+    const next: Record<Side, number> = { prev: 0, next: 0 };
+    // back ← old current (full quality), current ← incoming if it was full.
+    if (synced && curCopy && curValid) { copyInto(el(back), curCopy); next[back] = 2; } else clear(el(back));
+    if (synced && curCopy && lv[front] === 2) { copyInto(curCopy, el(front)); curValid = true; } else curValid = false;
+    clear(el(front));
+    lv = next;
     readyKey = stateKey();
     p = 0;
     editor.announce();
     urgent = true;
     idle(0);
   }
+
 
   // --- Gesture. A touch during an animation takes over instead of waiting:
   // during a spring-back it grabs the photo where it is; during a commit it
@@ -173,7 +185,7 @@
     p0 = p;
     swiping = p0 !== 0; // grabbed mid-motion: already a swipe
     samples = [{ t: start.t, x: e.clientX }];
-    if (!(ready.prev && ready.next)) void prepareNeighbours();
+    if (lv.prev < 2 || lv.next < 2) void prepareNeighbours();
   }
   function move(e: PointerEvent) {
     if (!start) return;
@@ -278,8 +290,9 @@
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
-        style:opacity={ready.prev && p > 0 ? inc.o : 0}
-        style:transition={late ? 'opacity 200ms ease-out' : 'none'}
+        class:skeleton={lv.prev === 0}
+        class:draft={lv.prev === 1}
+        style:opacity={p > 0 ? inc.o : 0}
       ></canvas>
       <canvas
         class="neighbour"
@@ -288,8 +301,9 @@
         style:width="{fit.w}px"
         style:height="{fit.h}px"
         style:transform="translateX({inc.x}px) scale({inc.s})"
-        style:opacity={ready.next && p < 0 ? inc.o : 0}
-        style:transition={late ? 'opacity 200ms ease-out' : 'none'}
+        class:skeleton={lv.next === 0}
+        class:draft={lv.next === 1}
+        style:opacity={p < 0 ? inc.o : 0}
       ></canvas>
       <canvas
         bind:this={canvas}
@@ -352,6 +366,12 @@
     pointer-events: none;
     will-change: transform, opacity;
   }
+  /* Not rendered yet: a grey skeleton, pulsing like the thumbnail placeholders. */
+  .neighbour.skeleton { background: var(--placeholder); animation: skeleton 1.2s ease-in-out infinite alternate; }
+  /* Pulses the colour, not opacity: opacity belongs to the swipe. */
+  @keyframes skeleton { to { background: #efedee; } }
+  @media (prefers-reduced-motion: reduce) { .neighbour.skeleton { animation: none; } }
+  .neighbour.draft { image-rendering: pixelated; }
   .dither {
     position: absolute;
     inset: 0;

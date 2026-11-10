@@ -4,6 +4,7 @@ import { TWEAK_NEUTRAL, tweakEffect, tweakWeights } from './color/tweak';
 import { encodeJpeg } from './export/jpeg';
 import { Renderer, type RenderParams } from './gl/renderer';
 import { cropRegion } from './image/crop';
+import { drawDitheredDraft } from './image/dither';
 import { decodeFull, exportBudget, loadImage, type LoadedImage } from './image/load';
 import { ALL_PRESETS, GROUPS, findPreset, groupOf, type Preset } from './presets';
 
@@ -193,10 +194,10 @@ class Editor {
     const ids = { prev: this.neighbour(-1), next: this.neighbour(1) };
     const lutOf = async (id: string) => {
       const t = this.tweakFor(id);
-      // Now: the next swipe needs these, ahead of thumbnails and warm-up work.
+      // Soon, not Now: until these land, the carousel shows a dithered draft.
       return t === TWEAK_NEUTRAL
-        ? this.luts.peekBase(id, r.space) ?? this.luts.base(id, r.space, Priority.Now)
-        : this.luts.peekSet(id, r.space) ?? this.luts.set(id, r.space, Priority.Now);
+        ? this.luts.peekBase(id, r.space) ?? this.luts.base(id, r.space, Priority.Soon)
+        : this.luts.peekSet(id, r.space) ?? this.luts.set(id, r.space, Priority.Soon);
     };
     const luts = await Promise.all(sides.map((k) => lutOf(ids[k])));
     // Bail if the photo or preset changed while waiting, or an export is running.
@@ -219,6 +220,42 @@ class Editor {
     r.render(this.params(this.comparing), [img.width, img.height]);
     if (targets.cur) copy(targets.cur);
     return true;
+  }
+
+  /**
+   * Draft neighbours for the swipe carousel: rendered with the small (17³)
+   * thumbnail LUT and drawn as a low-res dither, synchronously. Sides whose
+   * small LUT isn't cached yet are requested (not waited for); `pending`
+   * resolves once those are baked, so the caller can try again.
+   */
+  renderDrafts(targets: { prev?: HTMLCanvasElement; next?: HTMLCanvasElement }) {
+    const r = this.renderer, img = this.image, cur = this.currentLut;
+    const drawn: { prev?: boolean; next?: boolean } = {};
+    const waits: Promise<unknown>[] = [];
+    if (!r || !img || !cur || this.busy) return { drawn, pending: null };
+    const c = r.canvas as HTMLCanvasElement;
+    let touched = false;
+    for (const k of ['prev', 'next'] as const) {
+      const t = targets[k];
+      if (!t) continue;
+      const id = this.neighbour(k === 'prev' ? -1 : 1), tw = this.tweakFor(id);
+      const lut = tw === TWEAK_NEUTRAL ? this.luts.peekBase(id, r.space, THUMB_LUT) : this.luts.peekSet(id, r.space, THUMB_LUT);
+      if (!lut) {
+        waits.push(tw === TWEAK_NEUTRAL ? this.luts.base(id, r.space, Priority.Now, THUMB_LUT) : this.luts.set(id, r.space, Priority.Now, THUMB_LUT));
+        continue;
+      }
+      r.setLut(lut);
+      r.render(this.paramsFor(id, tw), [img.width, img.height]);
+      if (t.width !== c.width || t.height !== c.height) { t.width = c.width; t.height = c.height; }
+      drawDitheredDraft(t, c, r.space);
+      drawn[k] = true;
+      touched = true;
+    }
+    if (touched) {
+      r.setLut(cur);
+      r.render(this.params(this.comparing), [img.width, img.height]);
+    }
+    return { drawn, pending: waits.length ? Promise.all(waits) : null };
   }
 
   /**
