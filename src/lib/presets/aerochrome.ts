@@ -14,7 +14,7 @@ export const aerochrome: Group = {
           foliageHue: 22, foliageSpread: 0.25, foliageChroma: 1.9, foliageChromaMin: 0.13, foliageLift: 0.04,
           skyHue: 256, skyHueAmount: 0.5, skyDepth: 0.55, skyChroma: 1.4,
           cyanHue: 225, cyanAmount: 0.5,
-          skinPale: 0.2, tintA: 0.008, tintB: 0.002, contrast: 0.16,
+          skinPale: 0.2, tintA: 0.008, tintB: 0.002, contrast: 0.1, blacks: 0.012,
         }),
       },
     },
