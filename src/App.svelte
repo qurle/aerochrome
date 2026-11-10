@@ -104,6 +104,13 @@
   function key(e: KeyboardEvent, down: boolean) {
     // Hold \ to compare with the original, like in photo editors.
     if (e.code === 'Backslash' && editor.image) { editor.comparing = down; return; }
+    // Space does the same, unless it's typing text or (for Tab users) pressing the focused
+    // control. It also mustn't re-press a button that kept focus after a mouse click.
+    if (e.code === 'Space' && editor.image && !helpOpen) {
+      const keyboardControl = document.documentElement.dataset.nav === 'keyboard'
+        && (e.target as HTMLElement).closest('button, a, [role="button"]');
+      if (!typing(e) && !keyboardControl) { editor.comparing = down; e.preventDefault(); return; }
+    }
     // Esc drops keyboard focus (fullscreen and the help dialog close on their own).
     if (down && e.code === 'Escape' && !helpOpen && !editor.fullscreen) {
       const a = document.activeElement as HTMLElement | null;
@@ -369,12 +376,14 @@
   }
   .pager { flex: 1; min-height: 0; display: flex; flex-direction: column; gap: 64px; }
   .presets { flex: 1; min-height: 0; position: relative; }
+  /* The fades cover the list's 6px focus-ring margin (see .scroll) too, or
+     tiles show through above and beside them. */
   .presets::before {
     content: '';
     position: absolute;
-    left: 0; right: 0; top: 0;
-    height: 24px;
-    background: linear-gradient(var(--bg), transparent);
+    left: -6px; right: -6px; top: -6px;
+    height: 30px;
+    background: linear-gradient(var(--bg) 6px, transparent);
     pointer-events: none;
     z-index: 1;
     opacity: 0;
@@ -384,7 +393,7 @@
   .presets::after {
     content: '';
     position: absolute;
-    left: 0; right: 0; bottom: 0;
+    left: -6px; right: -6px; bottom: 0;
     height: 24px;
     background: linear-gradient(transparent, var(--bg));
     pointer-events: none;

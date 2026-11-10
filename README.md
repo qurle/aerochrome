@@ -44,7 +44,7 @@ with MozJPEG in a worker. Copy puts a PNG (max 4096 px) on the clipboard.
 | T, Shift+T | Random Tweak, reset Tweak |
 | F | Fullscreen (Esc closes) |
 | + / − / 0 / 1 | Fullscreen: zoom in / out / fit / 100% |
-| \\ (hold) | Show the original |
+| Space or \\ (hold) | Show the original |
 | ? | Help |
 
 Shortcuts use physical key positions, so they work in any keyboard layout.
