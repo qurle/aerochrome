@@ -128,7 +128,8 @@
         </button>
       {/if}
       {#if editor.comparing}<span class="badge">Original</span>
-      {:else if editor.flash}<span class="badge">{editor.flash}</span>{/if}
+      {:else if editor.flash}<span class="badge">{editor.flash}</span>
+      {:else if editor.isSample}<span class="badge sample">Sample</span>{/if}
     </div>
     {#if bottom}<div class="row" bind:clientHeight={bottomH}>{@render bottom()}</div>{/if}
   </div>

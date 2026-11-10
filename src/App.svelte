@@ -193,16 +193,22 @@
   >
     <Viewer onopen={open}>
       {#snippet top()}
-        <div class="desktop"><Button title="Open (O)" onclick={open}>Open</Button></div>
+        <div class="desktop" class:invisible={editor.isSample}><Button title="Open (O)" onclick={open}>Open</Button></div>
       {/snippet}
       {#snippet bottom()}
         <div class="actions">
-          <span class="mobile"><Button onclick={open}>Open</Button></span>
-          <span class="spacer"></span>
-          <span class="desktop">
-            <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!editor.busy} onclick={() => editor.copy()}>{copyLabel}</Button>
-          </span>
-          <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!editor.busy && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
+          {#if editor.isSample}
+            <span class="spacer"></span>
+            <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
+            <span class="spacer"></span>
+          {:else}
+            <span class="mobile"><Button onclick={open}>Open</Button></span>
+            <span class="spacer"></span>
+            <span class="desktop">
+              <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!editor.busy} onclick={() => editor.copy()}>{copyLabel}</Button>
+            </span>
+            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!editor.busy && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
+          {/if}
         </div>
       {/snippet}
     </Viewer>
@@ -282,6 +288,7 @@
   }
   .actions { display: flex; flex: 1; gap: 8px; align-items: center; }
   .spacer { flex: 1; }
+  .invisible { visibility: hidden; }
   .error { margin: 16px 0 0; color: var(--accent); text-align: center; font-size: 14px; }
 
   .settings {

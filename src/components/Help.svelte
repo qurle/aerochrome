@@ -20,6 +20,7 @@
     { keys: [['+'], ['−'], ['0'], ['1']], action: 'Fullscreen: zoom in, out, fit, 100%' },
     { keys: [['Esc']], action: 'Close fullscreen' },
     { keys: [['O'], [mod, 'O']], action: 'Open a photo' },
+    { keys: [[mod, 'V']], action: 'Paste a photo' },
     { keys: [[mod, 'C']], action: 'Copy image' },
     { keys: [[mod, 'E']], action: 'Export JPEG' },
     { keys: [['?']], action: 'This help' },
