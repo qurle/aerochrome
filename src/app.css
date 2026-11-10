@@ -43,3 +43,8 @@ button, input, a, [role='slider'] {
   *, *::before, *::after { transition-duration: 0.01ms !important; animation-duration: 0.01ms !important; }
 }
 ::selection { background: var(--accent); color: #fff; }
+
+/* Copy and export shortcuts pulse the photo (press() in App.svelte). */
+:root { --press-duration: 500ms; }
+.pressed { animation: press var(--press-duration) cubic-bezier(0.3, 0, 0.2, 1); }
+@keyframes press { 40% { scale: 0.97; } }

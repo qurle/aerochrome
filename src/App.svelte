@@ -15,7 +15,6 @@
   const foliageNote = $derived.by(() => {
     const st = editor.foliageStatus;
     if (st?.kind === 'download') return `${Math.round(st.progress * 100)}%`;
-    if (st?.kind === 'detect') return 'Detecting…';
     if (st?.kind === 'error') return 'Failed';
     return editor.foliageDownload && !editor.foliage ? `${MODEL_MB} MB` : '';
   });
@@ -91,13 +90,14 @@
     const t = e.target as HTMLElement;
     return t.isContentEditable || ['INPUT', 'TEXTAREA', 'SELECT'].includes(t.tagName);
   }
-  /** Show a copy or export shortcut on the photo: it scales down and back over 500 ms. */
+  /** Show a copy or export shortcut on the photo: it pulses (`.pressed` in app.css). */
   function press() {
-    if (!editor.image || matchMedia('(prefers-reduced-motion: reduce)').matches) return;
-    document.querySelector<HTMLElement>('section .image')?.animate(
-      [{ transform: 'scale(1)' }, { transform: 'scale(0.97)' }, { transform: 'scale(1)' }],
-      { duration: 500, easing: 'cubic-bezier(0.2, 0.8, 0.2, 1)' },
-    );
+    const el = document.querySelector<HTMLElement>('section .image');
+    if (!el) return;
+    el.classList.remove('pressed');
+    void el.offsetWidth; // restart the animation if it's still running
+    el.classList.add('pressed');
+    el.addEventListener('animationend', () => el.classList.remove('pressed'), { once: true });
   }
 
   // Shortcuts match physical keys (KeyboardEvent.code), so they work in any
@@ -126,8 +126,8 @@
     // ⌘/Ctrl+Shift combos belong to the browser (⌘⇧C inspects, ⌘⇧I/J open DevTools…).
     if (cmd && e.shiftKey) return;
     if (cmd) {
-      if (c === 'KeyC' && !getSelection()?.toString()) { press(); editor.copy(); }
-      else if (c === 'KeyE' || c === 'KeyS') { press(); void (editor.pending ? editor.savePending() : editor.exportJpeg()); }
+      if (c === 'KeyC' && !getSelection()?.toString()) { if (editor.copy()) press(); }
+      else if (c === 'KeyE' || c === 'KeyS') { if (editor.exportJpeg()) press(); }
       else if (c === 'KeyO') open();
       else return;
     } else if (c === 'ArrowRight') editor.step(1);
@@ -225,7 +225,6 @@
   const shown = $derived(editor.busy?.quiet ? null : editor.busy);
   const exportLabel = $derived.by(() => {
     const b = shown;
-    if (editor.pending) return 'Save';
     if (b?.kind === 'export') return `${Math.round((b.progress ?? 0) * 100)}%`;
     if (b?.kind === 'encode') return 'Saving…';
     return 'Export';
@@ -233,7 +232,6 @@
   const copyLabel = $derived(
     shown?.kind === 'copy' ? `${Math.round((shown.progress ?? 0) * 100)}%` :
     shown?.kind === 'copied' ? 'Copied' : 'Copy');
-  const exportClick = () => (editor.pending ? editor.savePending() : editor.exportJpeg());
   const noImage = $derived(!editor.image);
 </script>
 
@@ -280,7 +278,7 @@
             <span class="desktop">
               <Button variant="outline-accent" title="Copy ({mod}C)" disabled={noImage || !!shown} onclick={() => editor.copy()}>{copyLabel}</Button>
             </span>
-            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || (!!shown && !editor.pending)} onclick={exportClick}>{exportLabel}</Button>
+            <Button variant="accent" title="Export ({mod}E)" disabled={noImage || !!shown} onclick={() => editor.exportJpeg()}>{exportLabel}</Button>
           {/if}
         </div>
       {/snippet}
@@ -338,6 +336,7 @@
           <div class="foliage" transition:slide={{ duration: 220 }}>
             <Toggle
               label="Detect foliage"
+              busyLabel="Detecting foliage…"
               color="var(--accent)"
               checked={editor.foliage}
               note={foliageNote}

@@ -19,6 +19,7 @@ const THUMB_LUT = 17;
 const COPY_MAX = 4096;
 const JPEG_QUALITY = 96;
 const MASK_FADE_MS = 600;
+const ACTION_COOLDOWN_MS = 1500;
 
 /** Presets whose looks treat foliage specially (Custom looks colour by their own rules). */
 export const usesFoliage = (id: string) => groupOf(id).id !== 'custom';
@@ -42,8 +43,6 @@ class Editor {
   busy = $state<null | { kind: 'export' | 'encode' | 'copy' | 'copied'; progress?: number; quiet?: boolean }>(null);
   error = $state<string | null>(null);
   thumbs = $state.raw<Record<string, ImageBitmap>>({});
-  /** Mobile: finished export waiting for a tap on Save (share sheet needs a fresh gesture). */
-  pending = $state<File | null>(null);
   renderer: Renderer | null = null;
 
   private luts = new LutCache();
@@ -375,7 +374,6 @@ class Editor {
   async open(file: File, sample = false) {
     if (!sample) { this.userOpened = true; this.samplePending = false; }
     this.error = null;
-    this.pending = null;
     try {
       const img = await loadImage(file);
       if (sample && this.userOpened) { img.preview.close(); return; } // user won the race
@@ -553,8 +551,25 @@ class Editor {
     return `${this.image!.name}-${this.presetId}.jpg`;
   }
 
-  async exportJpeg(): Promise<void> {
-    if (!this.image || !this.renderer || this.busy) return;
+  /** Copy and export ignore repeats within this window (double clicks, held keys). */
+  private lastRun = { copy: 0, export: 0 };
+  private canRun(kind: 'copy' | 'export') {
+    if (!this.image || !this.renderer || this.busy) return false;
+    const now = performance.now();
+    if (now - this.lastRun[kind] < ACTION_COOLDOWN_MS) return false;
+    this.lastRun[kind] = now;
+    return true;
+  }
+
+  /** Render, encode and download a full-size JPEG. Returns whether it started. */
+  exportJpeg(): boolean {
+    if (!this.canRun('export')) return false;
+    void this.runExport();
+    return true;
+  }
+
+  private async runExport() {
+    if (!this.renderer) return;
     this.error = null;
     this.busy = { kind: 'export', progress: 0 };
     try {
@@ -563,11 +578,7 @@ class Editor {
       const blob = await encodeJpeg({ pixels, width, height, quality: JPEG_QUALITY, p3: this.renderer.space === 'display-p3' });
       const file = new File([blob], this.fileName(), { type: 'image/jpeg' });
       if (scaled) this.error = `Exported at ${width}×${height}: the original is too large for this device's memory.`;
-      if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [file] })) {
-        this.pending = file;
-      } else {
-        download(file);
-      }
+      download(file);
     } catch (e) {
       this.error = `Export failed: ${(e as Error).message}`;
     } finally {
@@ -575,20 +586,9 @@ class Editor {
     }
   }
 
-  async savePending() {
-    const file = this.pending;
-    if (!file) return;
-    try {
-      await navigator.share({ files: [file] });
-      this.pending = null;
-    } catch (e) {
-      if ((e as Error).name !== 'AbortError') download(file);
-    }
-  }
-
-  /** Copies a PNG capped at 4096 px. Must be called straight from a click. */
-  copy() {
-    if (!this.image || !this.renderer || this.busy) return;
+  /** Copies a PNG capped at 4096 px. Must be called straight from a click. Returns whether it started. */
+  copy(): boolean {
+    if (!this.canRun('copy')) return false;
     this.error = null;
     this.busy = { kind: 'copy', progress: 0, quiet: true };
     // Only show progress (and disable buttons) if the copy takes a while.
@@ -613,6 +613,7 @@ class Editor {
         this.busy = null;
         this.error = `Copy failed: ${(e as Error).message}`;
       });
+    return true;
   }
 }
 
