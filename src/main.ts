@@ -5,6 +5,9 @@ import { editor } from './lib/editor.svelte';
 
 mount(App, { target: document.getElementById('app')! });
 
+// iOS Safari only applies :active (pressed styles) when a touchstart listener exists.
+document.addEventListener('touchstart', () => {}, { passive: true });
+
 // Show the sample photo once the page is up, so it never delays first paint.
 const idle = (window as Window & { requestIdleCallback?: (cb: () => void, o?: { timeout: number }) => void }).requestIdleCallback;
 const startSample = () => void editor.loadSample();
