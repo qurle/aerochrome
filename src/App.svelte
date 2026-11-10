@@ -1,6 +1,7 @@
 <script lang="ts">
   import Button from './components/Button.svelte';
   import Fullscreen from './components/Fullscreen.svelte';
+  import Help from './components/Help.svelte';
   import Slider from './components/Slider.svelte';
   import Thumb from './components/Thumb.svelte';
   import Viewer from './components/Viewer.svelte';
@@ -11,6 +12,7 @@
   let dragging = $state(false);
   let pager: HTMLDivElement;
   let page = $state(0);
+  let helpOpen = $state(false);
   /** Preset list scrolled away from the top: show the top fade. */
   let listScrolled = $state(false);
 
@@ -47,7 +49,8 @@
   function key(e: KeyboardEvent, down: boolean) {
     // Hold "\\" to compare with the original, like in photo editors.
     if (e.key === '\\' && editor.image) { editor.comparing = down; return; }
-    if (!down || typing(e) || e.altKey) return;
+    if (!down || typing(e) || e.altKey || helpOpen) return;
+    if (e.key === '?') { helpOpen = true; e.preventDefault(); return; }
     const cmd = e.metaKey || e.ctrlKey;
     const k = e.key.toLowerCase();
     if (cmd) {
@@ -171,6 +174,8 @@
 />
 
 {#if editor.fullscreen && editor.image}<Fullscreen />{/if}
+<Help bind:open={helpOpen} />
+<button class="help" aria-label="About and shortcuts" title="About and shortcuts (?)" onclick={() => (helpOpen = true)}>?</button>
 
 <input bind:this={input} type="file" accept="image/*,.heic,.heif" hidden onchange={picked} />
 
@@ -327,12 +332,28 @@
   .current .label { margin-right: 4px; }
   .handle { display: none; }
 
+  /* Quiet "?" in a corner: bottom left on desktop, top right on phones. */
+  .help {
+    position: fixed;
+    left: 8px;
+    bottom: 8px;
+    z-index: 5;
+    padding: 12px 16px;
+    border: 0;
+    background: none;
+    color: var(--muted);
+    font: inherit;
+    cursor: pointer;
+  }
+  .help:hover { color: var(--ink); }
+
   .mobile { display: none; }
   .dots { justify-content: center; gap: 8px; padding: 16px 0 24px; }
   .dots button { width: 6px; height: 6px; padding: 0; border: 0; background: var(--line); cursor: pointer; }
   .dots button.on { background: var(--ink); }
 
   @media (max-width: 860px) {
+    .help { left: auto; bottom: auto; right: 4px; top: max(4px, env(safe-area-inset-top)); }
     main { flex-direction: column; height: 100svh; min-height: 0; }
     .desktop { display: none; }
     .mobile { display: flex; }
