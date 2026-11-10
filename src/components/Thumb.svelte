@@ -36,17 +36,15 @@
     overflow: hidden;
     cursor: pointer;
     border-radius: 0;
-    /* Deselecting is instant, so two thumbnails are never round at once. */
-    transition: transform 0.12s ease-out;
+    /* Same curve both ways: the old selection squares off while the new one
+       rounds, a cross-morph. */
+    transition: border-radius 0.32s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.12s ease-out;
     -webkit-tap-highlight-color: transparent;
   }
   .thumb:disabled { cursor: default; }
   /* 50%, not 999px: animating to a huge radius reaches the circle within the
      first few milliseconds and looks like a jump. */
-  .selected {
-    border-radius: 50%;
-    transition: border-radius 0.32s cubic-bezier(0.2, 0.8, 0.2, 1), transform 0.12s ease-out;
-  }
+  .selected { border-radius: 50%; }
   /* Immediate feedback on press, before any rendering happens. */
   .thumb:not(:disabled):active { transform: scale(0.92); }
   @media (prefers-reduced-motion: reduce) {
