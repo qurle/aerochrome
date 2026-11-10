@@ -1,3 +1,4 @@
+import sampleUrl from '../assets/sample.webp?url';
 import { LutCache, Priority, type LutData } from './color/luts';
 import { TWEAK_NEUTRAL, tweakEffect, tweakWeights } from './color/tweak';
 import { encodeJpeg } from './export/jpeg';
@@ -192,22 +193,27 @@ class Editor {
 
   /** The bundled sample is showing (until the user opens their own photo). */
   isSample = $state(false);
+  /** The sample is on its way: show its dithered placeholder meanwhile. */
+  samplePending = $state(true);
   private userOpened = false;
 
   /** Show the bundled sample photo, unless the user has already opened one. */
   async loadSample() {
-    if (this.image || this.userOpened) return;
+    if (this.image || this.userOpened) { this.samplePending = false; return; }
     try {
-      const res = await fetch('/sample.webp');
+      // Hashed asset: cached for good by the browser and the service worker.
+      const res = await fetch(sampleUrl);
       if (!res.ok) return;
       const file = new File([await res.blob()], 'sample.webp', { type: 'image/webp' });
       if (this.image || this.userOpened) return;
       await this.open(file, true);
-    } catch { /* offline on first visit: keep the empty state */ }
+    } catch { /* offline on first visit: fall back to the empty state */ } finally {
+      this.samplePending = false;
+    }
   }
 
   async open(file: File, sample = false) {
-    if (!sample) this.userOpened = true;
+    if (!sample) { this.userOpened = true; this.samplePending = false; }
     this.error = null;
     this.pending = null;
     try {

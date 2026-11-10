@@ -193,11 +193,11 @@
   >
     <Viewer onopen={open}>
       {#snippet top()}
-        <div class="desktop" class:invisible={editor.isSample}><Button title="Open (O)" onclick={open}>Open</Button></div>
+        <div class="desktop" class:invisible={editor.isSample || (editor.samplePending && !editor.image)}><Button title="Open (O)" onclick={open}>Open</Button></div>
       {/snippet}
       {#snippet bottom()}
         <div class="actions">
-          {#if editor.isSample}
+          {#if editor.isSample || (editor.samplePending && !editor.image)}
             <span class="spacer"></span>
             <Button variant="accent" title="Open (O)" onclick={open}>Open your photo</Button>
             <span class="spacer"></span>

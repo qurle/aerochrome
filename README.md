@@ -1,5 +1,7 @@
 # Aerochrome
 
+![Aerochrome](public/og.jpg)
+
 Infrared-style colour looks for photos, entirely in the browser. Nothing is uploaded.
 
 ## How it works

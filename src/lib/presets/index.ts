@@ -10,7 +10,7 @@ import { ultraviolet } from './ultraviolet';
 export * from './types';
 
 export const GROUPS: Group[] = [
-  aerochrome, oxichrome, trichrome, sugarBlue, goldenHour, ultraviolet, custom,
+  aerochrome, goldenHour, oxichrome, trichrome, sugarBlue, ultraviolet, custom,
 ].filter((g) => g.presets.length > 0);
 
 export const ALL_PRESETS = GROUPS.flatMap((g) => g.presets);
