@@ -433,14 +433,17 @@ class Editor {
     this.placeholderTimer = window.setTimeout(() => {
       const r = this.renderer, img = this.image;
       if (!r || !img || this.isSample || this.busy || this.fullscreen) return;
-      // WebGL keeps no frame around: render and copy within this task.
-      const c = r.canvas as HTMLCanvasElement;
-      r.render(this.params(), [img.width, img.height]);
+      // Render small off-screen: reading the full-size frame back from the GPU
+      // stalled the page for hundreds of milliseconds.
+      const w = 192, h = Math.max(1, Math.round((w * img.height) / img.width));
+      const frame = document.createElement('canvas');
+      frame.width = w; frame.height = h;
+      const pixels = new Uint8ClampedArray(r.renderSmall(this.params(), [img.width, img.height], w, h).buffer);
+      frame.getContext('2d', { colorSpace: r.space })!.putImageData(new ImageData(pixels, w, h, { colorSpace: r.space }), 0, 0);
       const small = document.createElement('canvas');
       small.width = 96;
-      small.height = Math.max(1, Math.round((96 * c.height) / c.width));
-      drawDitheredDraft(small, c, r.space);
-      if (this.comparing) r.render(this.params(true), [img.width, img.height]);
+      small.height = Math.max(1, Math.round((96 * h) / w));
+      drawDitheredDraft(small, frame, r.space);
       savePlaceholder({ src: small.toDataURL('image/png'), aspect: img.width / img.height });
     }, 1000);
   }

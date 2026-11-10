@@ -303,6 +303,25 @@ export class Renderer {
     this.drawMain(null, c.width, c.height, p, imageSize, crop, [0, 0, 1, 1]);
   }
 
+  /**
+   * Render the whole preview at a small size, off-screen, and read it back
+   * (RGBA, top row first). Synchronous; the canvas and source are untouched.
+   */
+  renderSmall(p: RenderParams, imageSize: [number, number], w: number, h: number): Uint8Array<ArrayBuffer> {
+    const gl = this.gl;
+    const t = this.target(w, h);
+    try {
+      this.drawMain(t, w, h, p, imageSize, [0, 0, 1, 1], [0, 0, 1, 1]);
+      const out = new Uint8Array(w * h * 4);
+      gl.readPixels(0, 0, w, h, gl.RGBA, gl.UNSIGNED_BYTE, out);
+      return out;
+    } finally {
+      gl.bindFramebuffer(gl.FRAMEBUFFER, null);
+      gl.deleteFramebuffer(t.fb);
+      gl.deleteTexture(t.tex);
+    }
+  }
+
   /** Free GPU memory right away instead of waiting for garbage collection. */
   dispose() {
     this.gl.getExtension('WEBGL_lose_context')?.loseContext();
