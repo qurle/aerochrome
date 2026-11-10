@@ -104,6 +104,13 @@
   function key(e: KeyboardEvent, down: boolean) {
     // Hold \ to compare with the original, like in photo editors.
     if (e.code === 'Backslash' && editor.image) { editor.comparing = down; return; }
+    // Space does the same, unless it's typing text or (for Tab users) pressing the focused
+    // control. It also mustn't re-press a button that kept focus after a mouse click.
+    if (e.code === 'Space' && editor.image && !helpOpen) {
+      const keyboardControl = document.documentElement.dataset.nav === 'keyboard'
+        && (e.target as HTMLElement).closest('button, a, [role="button"]');
+      if (!typing(e) && !keyboardControl) { editor.comparing = down; e.preventDefault(); return; }
+    }
     // Esc drops keyboard focus (fullscreen and the help dialog close on their own).
     if (down && e.code === 'Escape' && !helpOpen && !editor.fullscreen) {
       const a = document.activeElement as HTMLElement | null;

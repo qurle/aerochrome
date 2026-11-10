@@ -27,7 +27,7 @@
     { keys: [['+'], ['−'], ['0'], ['1']], action: 'Fullscreen: zoom in, out, fit, 100%' },
     { keys: [['Esc']], action: 'Close fullscreen' },
     // Compare
-    { keys: [['\\']], action: 'Hold to see the original' },
+    { keys: [['Space'], ['\\']], action: 'Hold to see the original' },
     // Help
     { keys: [['?']], action: 'This help' },
   ];
@@ -66,7 +66,7 @@
             <tr>
               <th scope="row">
                 {#each row.keys as combo, i (i)}
-                  {#if i > 0}<span class="or">{combo.length > 1 || row.keys[i - 1].length > 1 ? 'or' : ''}</span>{/if}<span class="combo">{#each combo as k (k)}<kbd>{k}</kbd>{/each}</span>
+                  {#if i > 0}<span class="or">{combo.length > 1 || row.keys[i - 1].length > 1 || combo[0].length > 1 || row.keys[i - 1][0].length > 1 ? 'or' : ''}</span>{/if}<span class="combo">{#each combo as k (k)}<kbd>{k}</kbd>{/each}</span>
                 {/each}
               </th>
               <td>{row.action}</td>
